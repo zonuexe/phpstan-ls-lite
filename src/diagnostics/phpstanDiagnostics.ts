@@ -270,6 +270,16 @@ export function createPhpstanDiagnosticsService(params: {
   const versions = new Map<string, number>();
   const versionSupportCache = new Map<string, boolean>();
   const workspaceScansInFlight = new Set<string>();
+  const pendingDocuments = new Map<string, TextDocument>();
+  let analysisChain: Promise<void> = Promise.resolve();
+
+  function enqueueTask(task: () => Promise<void>): void {
+    analysisChain = analysisChain
+      .then(task)
+      .catch((error) => {
+        logger(`[diagnostics] task failed: ${String(error)}`);
+      });
+  }
 
   async function runWorkspaceAnalysis(workspacePath: string): Promise<void> {
     if (workspaceScansInFlight.has(workspacePath)) {
@@ -346,7 +356,9 @@ export function createPhpstanDiagnosticsService(params: {
 
   return {
     analyzeWorkspace(workspacePath: string): void {
-      void runWorkspaceAnalysis(workspacePath);
+      enqueueTask(async () => {
+        await runWorkspaceAnalysis(workspacePath);
+      });
     },
     schedule(document: TextDocument): void {
       versions.set(document.uri, document.version);
@@ -358,7 +370,15 @@ export function createPhpstanDiagnosticsService(params: {
         document.uri,
         setTimeout(() => {
           timers.delete(document.uri);
-          void runForDocument(document);
+          pendingDocuments.set(document.uri, document);
+          enqueueTask(async () => {
+            const pending = pendingDocuments.get(document.uri);
+            if (!pending) {
+              return;
+            }
+            pendingDocuments.delete(document.uri);
+            await runForDocument(pending);
+          });
         }, debounceMs),
       );
     },
@@ -369,6 +389,7 @@ export function createPhpstanDiagnosticsService(params: {
       }
       timers.delete(uri);
       versions.delete(uri);
+      pendingDocuments.delete(uri);
       publishDiagnostics(uri, []);
     },
     dispose(): void {
@@ -378,6 +399,7 @@ export function createPhpstanDiagnosticsService(params: {
       timers.clear();
       versions.clear();
       versionSupportCache.clear();
+      pendingDocuments.clear();
     },
   };
 }
