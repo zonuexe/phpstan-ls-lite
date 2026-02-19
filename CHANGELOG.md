@@ -4,6 +4,13 @@ All notable changes of `phpstan-ls-lite` are documented in this file using the [
 
 ## Unreleased
 
+## 0.0.2 - 2026-02-19
+
+### Fixed
+
+ * Corrected npm executable metadata (`bin`) for scoped package distribution.
+ * Updated package metadata so `npx @zonuexe/phpstan-ls-lite` resolves the CLI entrypoint.
+
 ## 0.0.1 - 2026-02-19
 
 ### Added
