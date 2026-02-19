@@ -30,6 +30,7 @@ const diagnosticsService = createPhpstanDiagnosticsService({
   },
 });
 let workspaceFolders: WorkspaceFolder[] = [];
+let supportsWorkspaceFolderChange = false;
 
 function workspaceUriToPath(uri: string): string | null {
   try {
@@ -64,6 +65,8 @@ async function logResolvedRuntimes(): Promise<void> {
 }
 
 connection.onInitialize((params: InitializeParams) => {
+  supportsWorkspaceFolderChange = params.capabilities.workspace?.workspaceFolders === true;
+
   if (params.workspaceFolders && params.workspaceFolders.length > 0) {
     workspaceFolders = params.workspaceFolders;
   } else if (params.rootUri) {
@@ -91,19 +94,20 @@ connection.onInitialized(() => {
     }
     diagnosticsService.analyzeWorkspace(folderPath);
   }
-});
-
-connection.workspace.onDidChangeWorkspaceFolders((event) => {
-  const removedUris = new Set(event.removed.map((folder) => folder.uri));
-  const kept = workspaceFolders.filter((folder) => !removedUris.has(folder.uri));
-  workspaceFolders = [...kept, ...event.added];
-  void logResolvedRuntimes();
-  for (const folder of event.added) {
-    const folderPath = workspaceUriToPath(folder.uri);
-    if (!folderPath) {
-      continue;
-    }
-    diagnosticsService.analyzeWorkspace(folderPath);
+  if (supportsWorkspaceFolderChange) {
+    connection.workspace.onDidChangeWorkspaceFolders((event) => {
+      const removedUris = new Set(event.removed.map((folder) => folder.uri));
+      const kept = workspaceFolders.filter((folder) => !removedUris.has(folder.uri));
+      workspaceFolders = [...kept, ...event.added];
+      void logResolvedRuntimes();
+      for (const folder of event.added) {
+        const folderPath = workspaceUriToPath(folder.uri);
+        if (!folderPath) {
+          continue;
+        }
+        diagnosticsService.analyzeWorkspace(folderPath);
+      }
+    });
   }
 });
 

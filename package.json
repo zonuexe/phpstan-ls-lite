@@ -9,7 +9,8 @@
     "phpstan-ls-lite": "./dist/server.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/__tests__/**"
   ],
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json",
