@@ -108,11 +108,11 @@ describe('buildPhpstanAnalyzeCommand', () => {
     assert.deepEqual(command, {
       command: 'phpstan',
       args: [
-        '--memory-limit=2G',
         'analyze',
         '--error-format=json',
         '--no-progress',
         '--no-interaction',
+        '--memory-limit=2G',
         '--',
         '/repo/src/Foo.php',
       ],
@@ -138,12 +138,41 @@ describe('buildPhpstanAnalyzeCommand', () => {
     });
 
     assert.deepEqual(command.args, [
-      '--memory-limit=1G',
       'analyze',
       '--error-format=json',
       '--no-progress',
       '--no-interaction',
+      '--memory-limit=1G',
       '--xdebug',
+      '--',
+      '/repo/src/Foo.php',
+    ]);
+  });
+
+  it('keeps analyzed paths from scripts.phpstan args', () => {
+    const command = buildPhpstanAnalyzeCommand({
+      resolvedRuntime: {
+        kind: 'detected',
+        runtime: {
+          kind: 'command',
+          command: 'phpstan',
+          args: ['analyse', 'app', 'src', '--memory-limit=1G'],
+          source: 'scripts.phpstan',
+        },
+        composerJsonPath: '/repo/composer.json',
+        workingDirectory: '/repo',
+      },
+      targets: ['/repo/src/Foo.php'],
+    });
+
+    assert.deepEqual(command.args, [
+      'analyze',
+      '--error-format=json',
+      '--no-progress',
+      '--no-interaction',
+      'app',
+      'src',
+      '--memory-limit=1G',
       '--',
       '/repo/src/Foo.php',
     ]);
@@ -184,4 +213,3 @@ describe('buildPhpstanAnalyzeCommand', () => {
     });
   });
 });
-

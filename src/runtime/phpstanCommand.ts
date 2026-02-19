@@ -134,7 +134,6 @@ export function buildPhpstanAnalyzeCommand(params: BuildAnalyzeCommandParams): P
   const command = runtime.kind === 'file' ? runtime.executablePath : runtime.command;
 
   const args = [
-    ...normalizedRuntimeArgs,
     'analyze',
     `--error-format=${errorFormat}`,
     '--no-progress',
@@ -143,6 +142,7 @@ export function buildPhpstanAnalyzeCommand(params: BuildAnalyzeCommandParams): P
   if (configPath) {
     args.push('-c', configPath);
   }
+  args.push(...normalizedRuntimeArgs);
   args.push(...options);
   args.push('--', ...targets);
 
@@ -152,4 +152,3 @@ export function buildPhpstanAnalyzeCommand(params: BuildAnalyzeCommandParams): P
     cwd: resolvedRuntime.workingDirectory,
   };
 }
-

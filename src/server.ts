@@ -11,6 +11,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { resolvePhpstanRuntime } from './runtime/phpstanCommand.js';
+import { createPhpstanDiagnosticsService } from './diagnostics/phpstanDiagnostics.js';
 
 const connection = createConnection(
     ProposedFeatures.all,
@@ -18,6 +19,14 @@ const connection = createConnection(
     process.stdout,
 );
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+const diagnosticsService = createPhpstanDiagnosticsService({
+    publishDiagnostics: (uri, diagnostics) => {
+        connection.sendDiagnostics({ uri, diagnostics });
+    },
+    logger: (message) => {
+        connection.console.error(message);
+    },
+});
 let workspaceFolders: WorkspaceFolder[] = [];
 
 function workspaceUriToPath(uri: string): string | null {
@@ -62,8 +71,11 @@ connection.onInitialize((params: InitializeParams) => {
     }
     return {
         capabilities: {
-            textDocumentSync: TextDocumentSyncKind.Incremental,
-            // TODO
+            textDocumentSync: {
+                openClose: true,
+                change: TextDocumentSyncKind.Incremental,
+                save: true,
+            },
         },
     };
 });
@@ -77,6 +89,26 @@ connection.workspace.onDidChangeWorkspaceFolders((event) => {
     const kept = workspaceFolders.filter((folder) => !removedUris.has(folder.uri));
     workspaceFolders = [...kept, ...event.added];
     void logResolvedRuntimes();
+});
+
+documents.onDidOpen((event) => {
+    diagnosticsService.schedule(event.document);
+});
+
+documents.onDidChangeContent((event) => {
+    diagnosticsService.schedule(event.document);
+});
+
+documents.onDidSave((event) => {
+    diagnosticsService.schedule(event.document);
+});
+
+documents.onDidClose((event) => {
+    diagnosticsService.clear(event.document.uri);
+});
+
+connection.onShutdown(() => {
+    diagnosticsService.dispose();
 });
 
 documents.listen(connection);
