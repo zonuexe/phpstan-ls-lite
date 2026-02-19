@@ -6,7 +6,7 @@
   "main": "./dist/server.js",
   "types": "./dist/server.d.ts",
   "bin": {
-    "phpstan-ls-lite": "./dist/server.js"
+    "phpstan-ls-lite": "dist/server.js"
   },
   "files": [
     "dist",
