@@ -4,6 +4,8 @@ All notable changes of `phpstan-ls-lite` are documented in this file using the [
 
 ## Unreleased
 
+## 0.0.1 - 2026-02-19
+
 ### Added
 
  * Language Server Protocol server over stdio.

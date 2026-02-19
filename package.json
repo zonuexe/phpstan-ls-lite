@@ -1,6 +1,6 @@
 {
-  "name": "phpstan-ls-lite",
-  "version": "1.0.0",
+  "name": "@zonuexe/phpstan-ls-lite",
+  "version": "0.0.1",
   "description": "A lightweight and fast language server that wraps PHPStan.",
   "type": "module",
   "main": "./dist/server.js",
