@@ -44,7 +44,9 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 function isPathLike(token: string): boolean {
-  return token.includes('/') || token.includes('\\') || token.startsWith('.') || path.isAbsolute(token);
+  return (
+    token.includes('/') || token.includes('\\') || token.startsWith('.') || path.isAbsolute(token)
+  );
 }
 
 function normalizeArgs(args: string[]): string[] {
@@ -75,7 +77,7 @@ function tokenizeCommand(command: string): string[] {
       escaping = true;
       continue;
     }
-    if (char === '\'' && !inDouble) {
+    if (char === "'" && !inDouble) {
       inSingle = !inSingle;
       continue;
     }
@@ -151,7 +153,10 @@ async function detectFromScriptsPhpstan(
   return null;
 }
 
-async function detectFromVendorDir(composerDir: string, vendorDirRaw: unknown): Promise<PhpstanRuntime | null> {
+async function detectFromVendorDir(
+  composerDir: string,
+  vendorDirRaw: unknown,
+): Promise<PhpstanRuntime | null> {
   if (typeof vendorDirRaw !== 'string' || vendorDirRaw.length === 0) {
     return null;
   }
@@ -194,9 +199,10 @@ async function detectFromBamarniPlugin(
   }
 
   const targetDirectoryRaw = composerJson.extra?.['bamarni-bin']?.['target-directory'];
-  const targetDirectory = typeof targetDirectoryRaw === 'string' && targetDirectoryRaw.length > 0
-    ? targetDirectoryRaw
-    : 'vendor-bin';
+  const targetDirectory =
+    typeof targetDirectoryRaw === 'string' && targetDirectoryRaw.length > 0
+      ? targetDirectoryRaw
+      : 'vendor-bin';
   const toolRoot = path.isAbsolute(targetDirectory)
     ? targetDirectory
     : path.resolve(composerDir, targetDirectory);
@@ -240,12 +246,18 @@ export async function detectPhpstanRuntimeFromComposerJsonPath(
   const composerJson = parsed as ComposerJson;
   const composerDir = path.dirname(composerJsonPath);
 
-  const scriptCandidate = await detectFromScriptsPhpstan(composerDir, composerJson.scripts?.phpstan);
+  const scriptCandidate = await detectFromScriptsPhpstan(
+    composerDir,
+    composerJson.scripts?.phpstan,
+  );
   if (scriptCandidate) {
     return scriptCandidate;
   }
 
-  const vendorDirCandidate = await detectFromVendorDir(composerDir, composerJson.config?.['vendor-dir']);
+  const vendorDirCandidate = await detectFromVendorDir(
+    composerDir,
+    composerJson.config?.['vendor-dir'],
+  );
   if (vendorDirCandidate) {
     return vendorDirCandidate;
   }
@@ -259,4 +271,3 @@ export async function detectPhpstanRuntimeFromComposerJsonPath(
 
   return detectFromBamarniPlugin(composerDir, composerJson);
 }
-

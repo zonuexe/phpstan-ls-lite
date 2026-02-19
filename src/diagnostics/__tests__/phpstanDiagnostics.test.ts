@@ -41,7 +41,11 @@ describe('extractDiagnosticsForFile', () => {
   });
 
   it('returns empty array for invalid output', () => {
-    const diagnostics = _internal.extractDiagnosticsForFile('not-json', '/repo/src/Foo.php', '/repo');
+    const diagnostics = _internal.extractDiagnosticsForFile(
+      'not-json',
+      '/repo/src/Foo.php',
+      '/repo',
+    );
     assert.deepEqual(diagnostics, []);
   });
 
@@ -72,9 +76,6 @@ describe('formatCommandForLog', () => {
       '--token=xyz',
       '--memory-limit=1G',
     ]);
-    assert.equal(
-      text,
-      'phpstan analyze --api-key *** --token=*** --memory-limit=1G',
-    );
+    assert.equal(text, 'phpstan analyze --api-key *** --token=*** --memory-limit=1G');
   });
 });

@@ -127,18 +127,15 @@ function normalizeRuntimeArgs(runtimeArgs: string[]): string[] {
   return runtimeArgs;
 }
 
-export function buildPhpstanAnalyzeCommand(params: BuildAnalyzeCommandParams): PhpstanAnalyzeCommand {
+export function buildPhpstanAnalyzeCommand(
+  params: BuildAnalyzeCommandParams,
+): PhpstanAnalyzeCommand {
   const { resolvedRuntime, targets, configPath, errorFormat = 'json', options = [] } = params;
   const runtime = resolvedRuntime.runtime;
   const normalizedRuntimeArgs = normalizeRuntimeArgs(runtime.args);
   const command = runtime.kind === 'file' ? runtime.executablePath : runtime.command;
 
-  const args = [
-    'analyze',
-    `--error-format=${errorFormat}`,
-    '--no-progress',
-    '--no-interaction',
-  ];
+  const args = ['analyze', `--error-format=${errorFormat}`, '--no-progress', '--no-interaction'];
   if (configPath) {
     args.push('-c', configPath);
   }

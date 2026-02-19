@@ -69,7 +69,9 @@ function filePathToUri(filePath: string): string {
   return pathToFileURL(filePath).toString();
 }
 
-function runProcess(commandSpec: PhpstanAnalyzeCommand | { command: string; args: string[]; cwd: string }): Promise<CommandResult> {
+function runProcess(
+  commandSpec: PhpstanAnalyzeCommand | { command: string; args: string[]; cwd: string },
+): Promise<CommandResult> {
   return new Promise((resolve) => {
     const child = spawn(commandSpec.command, commandSpec.args, {
       cwd: commandSpec.cwd,
@@ -113,13 +115,7 @@ function maskArgumentToken(token: string): string {
 }
 
 function maskCommandArgs(args: readonly string[]): string[] {
-  const sensitiveFlags = new Set([
-    '--token',
-    '--password',
-    '--secret',
-    '--api-key',
-    '--apikey',
-  ]);
+  const sensitiveFlags = new Set(['--token', '--password', '--secret', '--api-key', '--apikey']);
   const masked: string[] = [];
   let maskNext = false;
   for (const arg of args) {
@@ -327,11 +323,9 @@ export function createPhpstanDiagnosticsService(params: {
   let analysisChain: Promise<void> = Promise.resolve();
 
   function enqueueTask(task: () => Promise<void>): void {
-    analysisChain = analysisChain
-      .then(task)
-      .catch((error) => {
-        logger(`[diagnostics] task failed: ${String(error)}`);
-      });
+    analysisChain = analysisChain.then(task).catch((error) => {
+      logger(`[diagnostics] task failed: ${String(error)}`);
+    });
   }
 
   function compact(text: string, maxLength = 400): string {

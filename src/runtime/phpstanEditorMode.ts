@@ -87,9 +87,11 @@ export function applyTempFileFallbackArgs(
   };
 }
 
-export function getPhpstanVersionCommand(
-  resolvedRuntime: ResolvedPhpstanRuntime,
-): { command: string; args: string[]; cwd: string } {
+export function getPhpstanVersionCommand(resolvedRuntime: ResolvedPhpstanRuntime): {
+  command: string;
+  args: string[];
+  cwd: string;
+} {
   const runtime = resolvedRuntime.runtime;
   return {
     command: runtime.kind === 'file' ? runtime.executablePath : runtime.command,
@@ -97,4 +99,3 @@ export function getPhpstanVersionCommand(
     cwd: resolvedRuntime.workingDirectory,
   };
 }
-

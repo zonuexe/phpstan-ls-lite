@@ -235,4 +235,3 @@ describe('detectPhpstanRuntimeFromComposerJsonPath', () => {
     assert.equal(detected, null);
   });
 });
-

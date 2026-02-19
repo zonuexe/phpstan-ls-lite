@@ -19,7 +19,10 @@ describe('isPhpstanEditorModeSupported', () => {
   });
 
   it('supports dev snapshots and higher majors', () => {
-    assert.equal(isPhpstanEditorModeSupported('PHPStan - PHP Static Analysis Tool 2.1.x-dev@abc123'), true);
+    assert.equal(
+      isPhpstanEditorModeSupported('PHPStan - PHP Static Analysis Tool 2.1.x-dev@abc123'),
+      true,
+    );
     assert.equal(isPhpstanEditorModeSupported('PHPStan - PHP Static Analysis Tool 3.0.0'), true);
   });
 });
@@ -51,12 +54,7 @@ describe('editor mode args', () => {
       args: ['analyze', '--error-format=json', '--', '/repo/src/Foo.php'],
     };
     const applied = applyTempFileFallbackArgs(base, '/tmp/phpstan-ls.php');
-    assert.deepEqual(applied.args, [
-      'analyze',
-      '--error-format=json',
-      '--',
-      '/tmp/phpstan-ls.php',
-    ]);
+    assert.deepEqual(applied.args, ['analyze', '--error-format=json', '--', '/tmp/phpstan-ls.php']);
   });
 });
 
@@ -80,4 +78,3 @@ describe('getPhpstanVersionCommand', () => {
     });
   });
 });
-
