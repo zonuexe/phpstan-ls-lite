@@ -62,3 +62,19 @@ describe('extractDiagnosticsForFile', () => {
     assert.equal(byFile?.get('/repo/src/Bar.php')?.length, 1);
   });
 });
+
+describe('formatCommandForLog', () => {
+  it('masks sensitive args', () => {
+    const text = _internal.formatCommandForLog('phpstan', [
+      'analyze',
+      '--api-key',
+      'abc123',
+      '--token=xyz',
+      '--memory-limit=1G',
+    ]);
+    assert.equal(
+      text,
+      'phpstan analyze --api-key *** --token=*** --memory-limit=1G',
+    );
+  });
+});

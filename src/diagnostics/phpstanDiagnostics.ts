@@ -92,6 +92,57 @@ function runProcess(commandSpec: PhpstanAnalyzeCommand | { command: string; args
   });
 }
 
+function runtimeSourceLabel(resolvedRuntime: ResolvedPhpstanRuntime): string {
+  if (resolvedRuntime.kind === 'fallback') {
+    return 'fallback';
+  }
+  return resolvedRuntime.runtime.source;
+}
+
+function maskArgumentToken(token: string): string {
+  const sensitiveKeys = ['token', 'password', 'secret', 'apikey', 'api-key'];
+  const eqIndex = token.indexOf('=');
+  if (eqIndex < 0) {
+    return token;
+  }
+  const key = token.slice(0, eqIndex).toLowerCase();
+  if (sensitiveKeys.some((sensitive) => key.includes(sensitive))) {
+    return `${token.slice(0, eqIndex + 1)}***`;
+  }
+  return token;
+}
+
+function maskCommandArgs(args: readonly string[]): string[] {
+  const sensitiveFlags = new Set([
+    '--token',
+    '--password',
+    '--secret',
+    '--api-key',
+    '--apikey',
+  ]);
+  const masked: string[] = [];
+  let maskNext = false;
+  for (const arg of args) {
+    if (maskNext) {
+      masked.push('***');
+      maskNext = false;
+      continue;
+    }
+    const lowered = arg.toLowerCase();
+    if (sensitiveFlags.has(lowered)) {
+      masked.push(arg);
+      maskNext = true;
+      continue;
+    }
+    masked.push(maskArgumentToken(arg));
+  }
+  return masked;
+}
+
+function formatCommandForLog(command: string, args: readonly string[]): string {
+  return [command, ...maskCommandArgs(args)].join(' ');
+}
+
 function normalizeFileEntries(
   output: PhpstanJsonOutput,
   cwd: string,
@@ -305,16 +356,18 @@ export function createPhpstanDiagnosticsService(params: {
       });
       const result = await runProcess(command);
       const diagnosticsByFile = extractDiagnosticsByFile(result.stdout, command.cwd);
+      const runtimeSource = runtimeSourceLabel(resolvedRuntime);
+      const commandText = formatCommandForLog(command.command, command.args);
 
       if (result.code === -1 || (result.code !== 0 && diagnosticsByFile === null)) {
-        const message = `[startup-analysis] PHPStan crashed in ${command.cwd}. Exit code: ${String(result.code)}.`;
+        const message = `[startup-analysis] PHPStan crashed in ${command.cwd}. source=${runtimeSource} code=${String(result.code)} command="${commandText}"`;
         logger(`${message}\n${result.stderr}`);
         notifyError(`${message} Server will continue with incremental analysis.`);
         return;
       }
       if (result.code !== 0) {
         loggerInfo(
-          `[startup-analysis] PHPStan exited with code ${String(result.code)} in ${command.cwd}. ${compact(result.stderr)}`,
+          `[startup-analysis] PHPStan exited with code ${String(result.code)} in ${command.cwd}. source=${runtimeSource} command="${commandText}" ${compact(result.stderr)}`,
         );
       }
 
@@ -348,6 +401,8 @@ export function createPhpstanDiagnosticsService(params: {
       document.getText(),
       versionSupportCache,
     );
+    const runtimeSource = runtimeSourceLabel(resolvedRuntime);
+    const commandText = formatCommandForLog(command.command, command.args);
 
     try {
       const result = await runProcess(command);
@@ -357,13 +412,15 @@ export function createPhpstanDiagnosticsService(params: {
       }
 
       if (result.code === -1) {
-        logger(`[diagnostics] spawn failed: ${result.stderr}`);
+        logger(
+          `[diagnostics] spawn failed for ${filePath}. source=${runtimeSource} command="${commandText}"\n${result.stderr}`,
+        );
         publishDiagnostics(document.uri, []);
         return;
       }
       if (result.code !== 0 && result.stderr.trim().length > 0) {
         loggerInfo(
-          `[diagnostics] PHPStan exited with code ${String(result.code)} for ${filePath}. ${compact(result.stderr)}`,
+          `[diagnostics] PHPStan exited with code ${String(result.code)} for ${filePath}. source=${runtimeSource} command="${commandText}" ${compact(result.stderr)}`,
         );
       }
 
@@ -427,4 +484,5 @@ export function createPhpstanDiagnosticsService(params: {
 export const _internal = {
   extractDiagnosticsForFile,
   extractDiagnosticsByFile,
+  formatCommandForLog,
 };
