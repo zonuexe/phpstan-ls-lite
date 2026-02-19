@@ -1,14 +1,90 @@
 # phpstan-ls-lite
 
-## Concept
-
 This is an unofficial, lightweight language server that wraps PHPStan.
 
 The project focuses on:
 
-- compact implementation
-- low overhead
+- compact and maintainable implementation with clear, predictable structure
+- practical features with as little overhead as possible
 - aiming for as-complete-as-possible support of the latest PHPStan
+
+## Status (v0.0.1)
+
+Current implementation focuses on diagnostics and runtime detection.
+
+### Implemented
+
+- LSP server over stdio
+- PHPStan runtime detection from `composer.json`:
+  1. `scripts.phpstan`
+  2. `config.vendor-dir` + `bin/phpstan`
+  3. default `vendor/bin/phpstan`
+  4. `bamarni/composer-bin-plugin` (`vendor-bin` or custom target directory)
+- Startup full-project analysis per workspace
+- Graceful continue when startup analysis crashes (user notification + logs)
+- Incremental diagnostics on:
+  - `textDocument/didOpen`
+  - `textDocument/didChange`
+  - `textDocument/didSave`
+- Editor Mode execution when supported:
+  - `--tmp-file`
+  - `--instead-of`
+- Sequential analysis queue to avoid overlapping runs
+
+### Not Yet Implemented
+
+- Hover
+- Code actions
+- Completion
+
+## Requirements
+
+- Node.js 22+ (recommended)
+- PHP 8.2+
+- PHPStan available in your project (recommended via Composer)
+
+## Run with npx
+
+After publishing to npm, start the language server with:
+
+```bash
+npx --yes @zonuexe/phpstan-ls-lite
+```
+
+The server communicates via stdio.
+
+## Example Client Configuration
+
+### Neovim (`lspconfig`)
+
+```lua
+require('lspconfig').phpstan_ls_lite.setup({
+  cmd = { 'npx', '--yes', '@zonuexe/phpstan-ls-lite' },
+  filetypes = { 'php' },
+  root_dir = require('lspconfig.util').root_pattern('composer.json', '.git'),
+})
+```
+
+### VS Code (`package.json` snippet)
+
+```json
+{
+  "contributes": {
+    "languages": [{ "id": "php", "extensions": [".php"] }]
+  },
+  "activationEvents": ["onLanguage:php"],
+  "main": "./out/extension.js"
+}
+```
+
+```ts
+new LanguageClient(
+  "phpstan-ls-lite",
+  "PHPStan LS Lite",
+  { command: "npx", args: ["--yes", "@zonuexe/phpstan-ls-lite"] },
+  { documentSelector: [{ language: "php" }] }
+);
+```
 
 ## Copyright
 
