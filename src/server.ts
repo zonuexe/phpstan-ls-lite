@@ -26,6 +26,9 @@ const diagnosticsService = createPhpstanDiagnosticsService({
     logger: (message) => {
         connection.console.error(message);
     },
+    notifyError: (message) => {
+        void connection.window.showErrorMessage(message);
+    },
 });
 let workspaceFolders: WorkspaceFolder[] = [];
 
@@ -82,6 +85,13 @@ connection.onInitialize((params: InitializeParams) => {
 
 connection.onInitialized(() => {
     void logResolvedRuntimes();
+    for (const folder of workspaceFolders) {
+        const folderPath = workspaceUriToPath(folder.uri);
+        if (!folderPath) {
+            continue;
+        }
+        diagnosticsService.analyzeWorkspace(folderPath);
+    }
 });
 
 connection.workspace.onDidChangeWorkspaceFolders((event) => {
@@ -89,6 +99,13 @@ connection.workspace.onDidChangeWorkspaceFolders((event) => {
     const kept = workspaceFolders.filter((folder) => !removedUris.has(folder.uri));
     workspaceFolders = [...kept, ...event.added];
     void logResolvedRuntimes();
+    for (const folder of event.added) {
+        const folderPath = workspaceUriToPath(folder.uri);
+        if (!folderPath) {
+            continue;
+        }
+        diagnosticsService.analyzeWorkspace(folderPath);
+    }
 });
 
 documents.onDidOpen((event) => {

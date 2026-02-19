@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Diagnostic, DiagnosticSeverity, TextDocument } from 'vscode-languageserver/node.js';
 import {
   buildPhpstanAnalyzeCommand,
@@ -42,6 +42,7 @@ type PublishDiagnostics = (uri: string, diagnostics: Diagnostic[]) => void;
 type LogMessage = (message: string) => void;
 
 export type PhpstanDiagnosticsService = {
+  analyzeWorkspace(workspacePath: string): void;
   schedule(document: TextDocument): void;
   clear(uri: string): void;
   dispose(): void;
@@ -62,6 +63,10 @@ function uriToFilePath(uri: string): string | null {
 
 function normalizePath(value: string): string {
   return path.normalize(value);
+}
+
+function filePathToUri(filePath: string): string {
+  return pathToFileURL(filePath).toString();
 }
 
 function runProcess(commandSpec: PhpstanAnalyzeCommand | { command: string; args: string[]; cwd: string }): Promise<CommandResult> {
@@ -161,6 +166,42 @@ function extractDiagnosticsForFile(
   return diagnostics;
 }
 
+function extractDiagnosticsByFile(
+  outputText: string,
+  cwd: string,
+): Map<string, Diagnostic[]> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(outputText);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+  const output = parsed as PhpstanJsonOutput;
+  const entries = normalizeFileEntries(output, cwd);
+  const diagnosticsByFile = new Map<string, Diagnostic[]>();
+  for (const [filePath, entry] of entries.entries()) {
+    if (!Array.isArray(entry.messages)) {
+      diagnosticsByFile.set(filePath, []);
+      continue;
+    }
+    const diagnostics: Diagnostic[] = [];
+    for (const message of entry.messages) {
+      if (!message || typeof message !== 'object') {
+        continue;
+      }
+      const diagnostic = toDiagnostic(message as PhpstanMessage);
+      if (diagnostic) {
+        diagnostics.push(diagnostic);
+      }
+    }
+    diagnosticsByFile.set(filePath, diagnostics);
+  }
+  return diagnosticsByFile;
+}
+
 async function createTempPhpFile(content: string): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'phpstan-ls-lite-'));
   const filePath = path.join(dir, 'buffer.php');
@@ -197,7 +238,7 @@ async function buildAnalyzeCommandForDocument(
   const tempFilePath = await createTempPhpFile(content);
   const baseCommand = buildPhpstanAnalyzeCommand({
     resolvedRuntime,
-    targets: [resolvedRuntime.workingDirectory],
+    targets: [filePath],
     errorFormat: 'json',
   });
   const editorModeSupported = await detectEditorMode(resolvedRuntime, versionSupportCache);
@@ -216,12 +257,52 @@ async function buildAnalyzeCommandForDocument(
 export function createPhpstanDiagnosticsService(params: {
   publishDiagnostics: PublishDiagnostics;
   logger?: LogMessage;
+  notifyError?: (message: string) => void;
   debounceMs?: number;
 }): PhpstanDiagnosticsService {
-  const { publishDiagnostics, logger = () => undefined, debounceMs = DEFAULT_DEBOUNCE_MS } = params;
+  const {
+    publishDiagnostics,
+    logger = () => undefined,
+    notifyError = () => undefined,
+    debounceMs = DEFAULT_DEBOUNCE_MS,
+  } = params;
   const timers = new Map<string, NodeJS.Timeout>();
   const versions = new Map<string, number>();
   const versionSupportCache = new Map<string, boolean>();
+  const workspaceScansInFlight = new Set<string>();
+
+  async function runWorkspaceAnalysis(workspacePath: string): Promise<void> {
+    if (workspaceScansInFlight.has(workspacePath)) {
+      return;
+    }
+    workspaceScansInFlight.add(workspacePath);
+    try {
+      const resolvedRuntime = await resolvePhpstanRuntime(workspacePath);
+      const command = buildPhpstanAnalyzeCommand({
+        resolvedRuntime,
+        targets: [resolvedRuntime.workingDirectory],
+        errorFormat: 'json',
+      });
+      const result = await runProcess(command);
+      const diagnosticsByFile = extractDiagnosticsByFile(result.stdout, command.cwd);
+
+      if (result.code === -1 || (result.code !== 0 && diagnosticsByFile === null)) {
+        const message = `[startup-analysis] PHPStan crashed in ${command.cwd}. Exit code: ${String(result.code)}.`;
+        logger(`${message}\n${result.stderr}`);
+        notifyError(`${message} Server will continue with incremental analysis.`);
+        return;
+      }
+
+      if (!diagnosticsByFile) {
+        return;
+      }
+      for (const [filePath, diagnostics] of diagnosticsByFile.entries()) {
+        publishDiagnostics(filePathToUri(filePath), diagnostics);
+      }
+    } finally {
+      workspaceScansInFlight.delete(workspacePath);
+    }
+  }
 
   async function runForDocument(document: TextDocument): Promise<void> {
     const currentVersion = versions.get(document.uri);
@@ -264,6 +345,9 @@ export function createPhpstanDiagnosticsService(params: {
   }
 
   return {
+    analyzeWorkspace(workspacePath: string): void {
+      void runWorkspaceAnalysis(workspacePath);
+    },
     schedule(document: TextDocument): void {
       versions.set(document.uri, document.version);
       const existing = timers.get(document.uri);
@@ -300,4 +384,5 @@ export function createPhpstanDiagnosticsService(params: {
 
 export const _internal = {
   extractDiagnosticsForFile,
+  extractDiagnosticsByFile,
 };

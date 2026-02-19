@@ -44,5 +44,21 @@ describe('extractDiagnosticsForFile', () => {
     const diagnostics = _internal.extractDiagnosticsForFile('not-json', '/repo/src/Foo.php', '/repo');
     assert.deepEqual(diagnostics, []);
   });
-});
 
+  it('extracts diagnostics for all files from project output', () => {
+    const output = JSON.stringify({
+      files: {
+        '/repo/src/Foo.php': {
+          messages: [{ message: 'Foo error', line: 2 }],
+        },
+        'src/Bar.php': {
+          messages: [{ message: 'Bar error', line: 3 }],
+        },
+      },
+    });
+    const byFile = _internal.extractDiagnosticsByFile(output, '/repo');
+    assert.ok(byFile);
+    assert.equal(byFile?.get('/repo/src/Foo.php')?.length, 1);
+    assert.equal(byFile?.get('/repo/src/Bar.php')?.length, 1);
+  });
+});
