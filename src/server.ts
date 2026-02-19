@@ -26,6 +26,9 @@ const diagnosticsService = createPhpstanDiagnosticsService({
     logger: (message) => {
         connection.console.error(message);
     },
+    loggerInfo: (message) => {
+        connection.console.info(message);
+    },
     notifyError: (message) => {
         void connection.window.showErrorMessage(message);
     },

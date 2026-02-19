@@ -257,12 +257,14 @@ async function buildAnalyzeCommandForDocument(
 export function createPhpstanDiagnosticsService(params: {
   publishDiagnostics: PublishDiagnostics;
   logger?: LogMessage;
+  loggerInfo?: LogMessage;
   notifyError?: (message: string) => void;
   debounceMs?: number;
 }): PhpstanDiagnosticsService {
   const {
     publishDiagnostics,
     logger = () => undefined,
+    loggerInfo = () => undefined,
     notifyError = () => undefined,
     debounceMs = DEFAULT_DEBOUNCE_MS,
   } = params;
@@ -279,6 +281,14 @@ export function createPhpstanDiagnosticsService(params: {
       .catch((error) => {
         logger(`[diagnostics] task failed: ${String(error)}`);
       });
+  }
+
+  function compact(text: string, maxLength = 400): string {
+    const oneLine = text.replace(/\s+/g, ' ').trim();
+    if (oneLine.length <= maxLength) {
+      return oneLine;
+    }
+    return `${oneLine.slice(0, maxLength)}...`;
   }
 
   async function runWorkspaceAnalysis(workspacePath: string): Promise<void> {
@@ -301,6 +311,11 @@ export function createPhpstanDiagnosticsService(params: {
         logger(`${message}\n${result.stderr}`);
         notifyError(`${message} Server will continue with incremental analysis.`);
         return;
+      }
+      if (result.code !== 0) {
+        loggerInfo(
+          `[startup-analysis] PHPStan exited with code ${String(result.code)} in ${command.cwd}. ${compact(result.stderr)}`,
+        );
       }
 
       if (!diagnosticsByFile) {
@@ -345,6 +360,11 @@ export function createPhpstanDiagnosticsService(params: {
         logger(`[diagnostics] spawn failed: ${result.stderr}`);
         publishDiagnostics(document.uri, []);
         return;
+      }
+      if (result.code !== 0 && result.stderr.trim().length > 0) {
+        loggerInfo(
+          `[diagnostics] PHPStan exited with code ${String(result.code)} for ${filePath}. ${compact(result.stderr)}`,
+        );
       }
 
       const diagnostics = extractDiagnosticsForFile(result.stdout, filePath, command.cwd);
