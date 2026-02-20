@@ -4,6 +4,27 @@ All notable changes of `phpstan-ls-lite` are documented in this file using the [
 
 ## Unreleased
 
+## 0.0.3 - 2026-02-20
+
+### Added
+
+ * Client-configurable diagnostics behavior via `initialize.initializationOptions` and `workspace/didChangeConfiguration`.
+ * New settings:
+   * `enableDiagnostics`
+   * `runOnDidSaveOnly`
+   * `phpstan.extraArgs`
+   * `phpstan.commandOverride`
+ * Stub support for `textDocument/documentSymbol` and `textDocument/completion` (returns empty results instead of unhandled-method noise).
+
+### Changed
+
+ * Removed startup full-project analysis; diagnostics now run per-document from open/change/save events.
+
+### Fixed
+
+ * Improved diagnostics fallback when PHPStan exits with errors by surfacing execution-failure diagnostics.
+ * Added support for top-level PHPStan JSON `errors` as diagnostics when file-level messages are unavailable.
+
 ## 0.0.2 - 2026-02-19
 
 ### Fixed

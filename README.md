@@ -8,7 +8,7 @@ The project focuses on:
 - practical features with as little overhead as possible
 - aiming for as-complete-as-possible support of the latest PHPStan
 
-## Status (v0.0.1)
+## Status (v0.0.3)
 
 Current implementation focuses on diagnostics and runtime detection.
 
