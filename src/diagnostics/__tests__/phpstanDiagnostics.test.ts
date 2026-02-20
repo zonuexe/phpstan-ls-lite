@@ -79,3 +79,30 @@ describe('formatCommandForLog', () => {
     assert.equal(text, 'phpstan analyze --api-key *** --token=*** --memory-limit=1G');
   });
 });
+
+describe('createExecutionFailureDiagnostic', () => {
+  it('creates a synthetic diagnostic from stderr', () => {
+    const diagnostic = _internal.createExecutionFailureDiagnostic(
+      1,
+      '\nIn TcpServer.php line 167:\nFailed to listen\n',
+    );
+    assert.equal(diagnostic.source, 'phpstan-ls-lite');
+    assert.match(diagnostic.message, /PHPStan execution failed/);
+    assert.match(diagnostic.message, /In TcpServer.php line 167/);
+    assert.equal(diagnostic.range.start.line, 0);
+  });
+});
+
+describe('extractGlobalErrors', () => {
+  it('converts top-level phpstan errors to diagnostics', () => {
+    const diagnostics = _internal.extractGlobalErrors(
+      JSON.stringify({
+        files: {},
+        errors: ['Internal error happened'],
+      }),
+    );
+    assert.equal(diagnostics.length, 1);
+    assert.equal(diagnostics[0]?.source, 'phpstan');
+    assert.match(diagnostics[0]?.message ?? '', /Internal error happened/);
+  });
+});

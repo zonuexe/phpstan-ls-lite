@@ -25,9 +25,6 @@ const diagnosticsService = createPhpstanDiagnosticsService({
   loggerInfo: (message) => {
     connection.console.info(message);
   },
-  notifyError: (message) => {
-    void connection.window.showErrorMessage(message);
-  },
 });
 let workspaceFolders: WorkspaceFolder[] = [];
 let supportsWorkspaceFolderChange = false;
@@ -81,32 +78,23 @@ connection.onInitialize((params: InitializeParams) => {
         change: TextDocumentSyncKind.Incremental,
         save: true,
       },
+      documentSymbolProvider: true,
+      completionProvider: {
+        resolveProvider: false,
+        triggerCharacters: ['$', '-', '>'],
+      },
     },
   };
 });
 
 connection.onInitialized(() => {
   void logResolvedRuntimes();
-  for (const folder of workspaceFolders) {
-    const folderPath = workspaceUriToPath(folder.uri);
-    if (!folderPath) {
-      continue;
-    }
-    diagnosticsService.analyzeWorkspace(folderPath);
-  }
   if (supportsWorkspaceFolderChange) {
     connection.workspace.onDidChangeWorkspaceFolders((event) => {
       const removedUris = new Set(event.removed.map((folder) => folder.uri));
       const kept = workspaceFolders.filter((folder) => !removedUris.has(folder.uri));
       workspaceFolders = [...kept, ...event.added];
       void logResolvedRuntimes();
-      for (const folder of event.added) {
-        const folderPath = workspaceUriToPath(folder.uri);
-        if (!folderPath) {
-          continue;
-        }
-        diagnosticsService.analyzeWorkspace(folderPath);
-      }
     });
   }
 });
@@ -125,6 +113,14 @@ documents.onDidSave((event) => {
 
 documents.onDidClose((event) => {
   diagnosticsService.clear(event.document.uri);
+});
+
+connection.onDocumentSymbol(() => {
+  return [];
+});
+
+connection.onCompletion(() => {
+  return [];
 });
 
 connection.onShutdown(() => {

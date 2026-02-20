@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import type { Diagnostic, DiagnosticSeverity, TextDocument } from 'vscode-languageserver/node.js';
 import {
   buildPhpstanAnalyzeCommand,
@@ -30,6 +30,7 @@ type PhpstanFileEntry = {
 
 type PhpstanJsonOutput = {
   files?: Record<string, PhpstanFileEntry>;
+  errors?: unknown;
 };
 
 type CommandResult = {
@@ -42,7 +43,6 @@ type PublishDiagnostics = (uri: string, diagnostics: Diagnostic[]) => void;
 type LogMessage = (message: string) => void;
 
 export type PhpstanDiagnosticsService = {
-  analyzeWorkspace(workspacePath: string): void;
   schedule(document: TextDocument): void;
   clear(uri: string): void;
   dispose(): void;
@@ -63,10 +63,6 @@ function uriToFilePath(uri: string): string | null {
 
 function normalizePath(value: string): string {
   return path.normalize(value);
-}
-
-function filePathToUri(filePath: string): string {
-  return pathToFileURL(filePath).toString();
 }
 
 function runProcess(
@@ -179,6 +175,58 @@ function toDiagnostic(messageEntry: PhpstanMessage): Diagnostic | null {
   };
 }
 
+function createExecutionFailureDiagnostic(code: number | null, stderr: string): Diagnostic {
+  const firstLine = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  const details = firstLine ?? 'Unknown PHPStan execution error.';
+  return {
+    severity: 1 as DiagnosticSeverity,
+    range: {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 1 },
+    },
+    source: 'phpstan-ls-lite',
+    message: `PHPStan execution failed (exit code: ${String(code)}): ${details}`,
+  };
+}
+
+function createGlobalErrorDiagnostic(message: string): Diagnostic {
+  return {
+    severity: 1 as DiagnosticSeverity,
+    range: {
+      start: { line: 0, character: 0 },
+      end: { line: 0, character: 1 },
+    },
+    source: 'phpstan',
+    message,
+  };
+}
+
+function extractGlobalErrors(outputText: string): Diagnostic[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(outputText);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return [];
+  }
+  const output = parsed as PhpstanJsonOutput;
+  if (!Array.isArray(output.errors)) {
+    return [];
+  }
+  const diagnostics: Diagnostic[] = [];
+  for (const error of output.errors) {
+    if (typeof error === 'string' && error.trim().length > 0) {
+      diagnostics.push(createGlobalErrorDiagnostic(error.trim()));
+    }
+  }
+  return diagnostics;
+}
+
 function extractDiagnosticsForFile(
   outputText: string,
   targetFilePath: string,
@@ -281,7 +329,11 @@ async function buildAnalyzeCommandForDocument(
   filePath: string,
   content: string,
   versionSupportCache: Map<string, boolean>,
-): Promise<{ command: PhpstanAnalyzeCommand; tempFilePath: string }> {
+): Promise<{
+  command: PhpstanAnalyzeCommand;
+  tempFilePath: string;
+  editorModeUsed: boolean;
+}> {
   const tempFilePath = await createTempPhpFile(content);
   const baseCommand = buildPhpstanAnalyzeCommand({
     resolvedRuntime,
@@ -293,11 +345,13 @@ async function buildAnalyzeCommandForDocument(
     return {
       command: applyEditorModeArgs(baseCommand, tempFilePath, filePath),
       tempFilePath,
+      editorModeUsed: true,
     };
   }
   return {
     command: applyTempFileFallbackArgs(baseCommand, tempFilePath),
     tempFilePath,
+    editorModeUsed: false,
   };
 }
 
@@ -305,25 +359,22 @@ export function createPhpstanDiagnosticsService(params: {
   publishDiagnostics: PublishDiagnostics;
   logger?: LogMessage;
   loggerInfo?: LogMessage;
-  notifyError?: (message: string) => void;
   debounceMs?: number;
 }): PhpstanDiagnosticsService {
   const {
     publishDiagnostics,
     logger = () => undefined,
     loggerInfo = () => undefined,
-    notifyError = () => undefined,
     debounceMs = DEFAULT_DEBOUNCE_MS,
   } = params;
   const timers = new Map<string, NodeJS.Timeout>();
   const versions = new Map<string, number>();
   const versionSupportCache = new Map<string, boolean>();
-  const workspaceScansInFlight = new Set<string>();
   const pendingDocuments = new Map<string, TextDocument>();
-  let analysisChain: Promise<void> = Promise.resolve();
+  let documentAnalysisChain: Promise<void> = Promise.resolve();
 
-  function enqueueTask(task: () => Promise<void>): void {
-    analysisChain = analysisChain.then(task).catch((error) => {
+  function enqueueDocumentTask(task: () => Promise<void>): void {
+    documentAnalysisChain = documentAnalysisChain.then(task).catch((error) => {
       logger(`[diagnostics] task failed: ${String(error)}`);
     });
   }
@@ -334,46 +385,6 @@ export function createPhpstanDiagnosticsService(params: {
       return oneLine;
     }
     return `${oneLine.slice(0, maxLength)}...`;
-  }
-
-  async function runWorkspaceAnalysis(workspacePath: string): Promise<void> {
-    if (workspaceScansInFlight.has(workspacePath)) {
-      return;
-    }
-    workspaceScansInFlight.add(workspacePath);
-    try {
-      const resolvedRuntime = await resolvePhpstanRuntime(workspacePath);
-      const command = buildPhpstanAnalyzeCommand({
-        resolvedRuntime,
-        targets: [resolvedRuntime.workingDirectory],
-        errorFormat: 'json',
-      });
-      const result = await runProcess(command);
-      const diagnosticsByFile = extractDiagnosticsByFile(result.stdout, command.cwd);
-      const runtimeSource = runtimeSourceLabel(resolvedRuntime);
-      const commandText = formatCommandForLog(command.command, command.args);
-
-      if (result.code === -1 || (result.code !== 0 && diagnosticsByFile === null)) {
-        const message = `[startup-analysis] PHPStan crashed in ${command.cwd}. source=${runtimeSource} code=${String(result.code)} command="${commandText}"`;
-        logger(`${message}\n${result.stderr}`);
-        notifyError(`${message} Server will continue with incremental analysis.`);
-        return;
-      }
-      if (result.code !== 0) {
-        loggerInfo(
-          `[startup-analysis] PHPStan exited with code ${String(result.code)} in ${command.cwd}. source=${runtimeSource} command="${commandText}" ${compact(result.stderr)}`,
-        );
-      }
-
-      if (!diagnosticsByFile) {
-        return;
-      }
-      for (const [filePath, diagnostics] of diagnosticsByFile.entries()) {
-        publishDiagnostics(filePathToUri(filePath), diagnostics);
-      }
-    } finally {
-      workspaceScansInFlight.delete(workspacePath);
-    }
   }
 
   async function runForDocument(document: TextDocument): Promise<void> {
@@ -389,7 +400,7 @@ export function createPhpstanDiagnosticsService(params: {
     }
 
     const resolvedRuntime = await resolvePhpstanRuntime(filePath);
-    const { command, tempFilePath } = await buildAnalyzeCommandForDocument(
+    const { command, tempFilePath, editorModeUsed } = await buildAnalyzeCommandForDocument(
       resolvedRuntime,
       filePath,
       document.getText(),
@@ -409,7 +420,9 @@ export function createPhpstanDiagnosticsService(params: {
         logger(
           `[diagnostics] spawn failed for ${filePath}. source=${runtimeSource} command="${commandText}"\n${result.stderr}`,
         );
-        publishDiagnostics(document.uri, []);
+        publishDiagnostics(document.uri, [
+          createExecutionFailureDiagnostic(result.code, result.stderr),
+        ]);
         return;
       }
       if (result.code !== 0 && result.stderr.trim().length > 0) {
@@ -418,7 +431,16 @@ export function createPhpstanDiagnosticsService(params: {
         );
       }
 
-      const diagnostics = extractDiagnosticsForFile(result.stdout, filePath, command.cwd);
+      let diagnostics = extractDiagnosticsForFile(result.stdout, filePath, command.cwd);
+      if (!editorModeUsed && diagnostics.length === 0) {
+        diagnostics = extractDiagnosticsForFile(result.stdout, tempFilePath, command.cwd);
+      }
+      if (diagnostics.length === 0) {
+        diagnostics = extractGlobalErrors(result.stdout);
+      }
+      if (diagnostics.length === 0 && result.code !== 0 && result.stderr.trim().length > 0) {
+        diagnostics = [createExecutionFailureDiagnostic(result.code, result.stderr)];
+      }
       publishDiagnostics(document.uri, diagnostics);
     } finally {
       await cleanupTempPhpFile(tempFilePath);
@@ -426,11 +448,6 @@ export function createPhpstanDiagnosticsService(params: {
   }
 
   return {
-    analyzeWorkspace(workspacePath: string): void {
-      enqueueTask(async () => {
-        await runWorkspaceAnalysis(workspacePath);
-      });
-    },
     schedule(document: TextDocument): void {
       versions.set(document.uri, document.version);
       const existing = timers.get(document.uri);
@@ -442,7 +459,7 @@ export function createPhpstanDiagnosticsService(params: {
         setTimeout(() => {
           timers.delete(document.uri);
           pendingDocuments.set(document.uri, document);
-          enqueueTask(async () => {
+          enqueueDocumentTask(async () => {
             const pending = pendingDocuments.get(document.uri);
             if (!pending) {
               return;
@@ -476,6 +493,8 @@ export function createPhpstanDiagnosticsService(params: {
 }
 
 export const _internal = {
+  createExecutionFailureDiagnostic,
+  extractGlobalErrors,
   extractDiagnosticsForFile,
   extractDiagnosticsByFile,
   formatCommandForLog,
