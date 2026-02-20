@@ -42,13 +42,47 @@ type CommandResult = {
 type PublishDiagnostics = (uri: string, diagnostics: Diagnostic[]) => void;
 type LogMessage = (message: string) => void;
 
+type ScheduleTrigger = 'open' | 'change' | 'save';
+
+type CommandOverride = {
+  command: string;
+  args?: string[];
+} | null;
+
+export type PhpstanDiagnosticsSettings = {
+  enableDiagnostics: boolean;
+  runOnDidSaveOnly: boolean;
+  phpstan: {
+    extraArgs: string[];
+    commandOverride: CommandOverride;
+  };
+};
+
+export type PhpstanDiagnosticsSettingsUpdate = {
+  enableDiagnostics?: boolean;
+  runOnDidSaveOnly?: boolean;
+  phpstan?: {
+    extraArgs?: string[];
+    commandOverride?: CommandOverride;
+  };
+};
+
 export type PhpstanDiagnosticsService = {
-  schedule(document: TextDocument): void;
+  updateSettings(settings: PhpstanDiagnosticsSettingsUpdate): void;
+  schedule(document: TextDocument, trigger: ScheduleTrigger): void;
   clear(uri: string): void;
   dispose(): void;
 };
 
 const DEFAULT_DEBOUNCE_MS = 250;
+const DEFAULT_SETTINGS: PhpstanDiagnosticsSettings = {
+  enableDiagnostics: true,
+  runOnDidSaveOnly: false,
+  phpstan: {
+    extraArgs: [],
+    commandOverride: null,
+  },
+};
 
 function uriToFilePath(uri: string): string | null {
   try {
@@ -133,6 +167,56 @@ function maskCommandArgs(args: readonly string[]): string[] {
 
 function formatCommandForLog(command: string, args: readonly string[]): string {
   return [command, ...maskCommandArgs(args)].join(' ');
+}
+
+function mergeSettings(
+  base: PhpstanDiagnosticsSettings,
+  incoming: PhpstanDiagnosticsSettingsUpdate,
+): PhpstanDiagnosticsSettings {
+  const extraArgs = incoming.phpstan?.extraArgs;
+  return {
+    enableDiagnostics: incoming.enableDiagnostics ?? base.enableDiagnostics,
+    runOnDidSaveOnly: incoming.runOnDidSaveOnly ?? base.runOnDidSaveOnly,
+    phpstan: {
+      extraArgs: Array.isArray(extraArgs) ? extraArgs : base.phpstan.extraArgs,
+      commandOverride:
+        incoming.phpstan?.commandOverride === undefined
+          ? base.phpstan.commandOverride
+          : incoming.phpstan.commandOverride,
+    },
+  };
+}
+
+function injectArgsBeforeTargetSeparator(
+  originalArgs: readonly string[],
+  injectedArgs: readonly string[],
+): string[] {
+  if (injectedArgs.length === 0) {
+    return [...originalArgs];
+  }
+  const separatorIndex = originalArgs.indexOf('--');
+  if (separatorIndex < 0) {
+    return [...originalArgs, ...injectedArgs];
+  }
+  return [
+    ...originalArgs.slice(0, separatorIndex),
+    ...injectedArgs,
+    ...originalArgs.slice(separatorIndex),
+  ];
+}
+
+function applyCommandOverride(
+  commandSpec: { command: string; args: string[]; cwd: string },
+  commandOverride: CommandOverride,
+): { command: string; args: string[]; cwd: string } {
+  if (!commandOverride) {
+    return commandSpec;
+  }
+  return {
+    command: commandOverride.command,
+    args: [...(commandOverride.args ?? []), ...commandSpec.args],
+    cwd: commandSpec.cwd,
+  };
 }
 
 function normalizeFileEntries(
@@ -310,9 +394,13 @@ async function cleanupTempPhpFile(filePath: string): Promise<void> {
 
 async function detectEditorMode(
   resolvedRuntime: ResolvedPhpstanRuntime,
+  settings: PhpstanDiagnosticsSettings,
   versionSupportCache: Map<string, boolean>,
 ): Promise<boolean> {
-  const versionCommand = getPhpstanVersionCommand(resolvedRuntime);
+  const versionCommand = applyCommandOverride(
+    getPhpstanVersionCommand(resolvedRuntime),
+    settings.phpstan.commandOverride,
+  );
   const cacheKey = `${versionCommand.cwd}::${versionCommand.command}`;
   const cached = versionSupportCache.get(cacheKey);
   if (cached !== undefined) {
@@ -326,6 +414,7 @@ async function detectEditorMode(
 
 async function buildAnalyzeCommandForDocument(
   resolvedRuntime: ResolvedPhpstanRuntime,
+  settings: PhpstanDiagnosticsSettings,
   filePath: string,
   content: string,
   versionSupportCache: Map<string, boolean>,
@@ -340,16 +429,26 @@ async function buildAnalyzeCommandForDocument(
     targets: [filePath],
     errorFormat: 'json',
   });
-  const editorModeSupported = await detectEditorMode(resolvedRuntime, versionSupportCache);
+  const editorModeSupported = await detectEditorMode(
+    resolvedRuntime,
+    settings,
+    versionSupportCache,
+  );
+  const extraArgsCommand = {
+    command: baseCommand.command,
+    cwd: baseCommand.cwd,
+    args: injectArgsBeforeTargetSeparator(baseCommand.args, settings.phpstan.extraArgs),
+  };
+  const command = applyCommandOverride(extraArgsCommand, settings.phpstan.commandOverride);
   if (editorModeSupported) {
     return {
-      command: applyEditorModeArgs(baseCommand, tempFilePath, filePath),
+      command: applyEditorModeArgs(command, tempFilePath, filePath),
       tempFilePath,
       editorModeUsed: true,
     };
   }
   return {
-    command: applyTempFileFallbackArgs(baseCommand, tempFilePath),
+    command: applyTempFileFallbackArgs(command, tempFilePath),
     tempFilePath,
     editorModeUsed: false,
   };
@@ -372,6 +471,7 @@ export function createPhpstanDiagnosticsService(params: {
   const versionSupportCache = new Map<string, boolean>();
   const pendingDocuments = new Map<string, TextDocument>();
   let documentAnalysisChain: Promise<void> = Promise.resolve();
+  let settings = DEFAULT_SETTINGS;
 
   function enqueueDocumentTask(task: () => Promise<void>): void {
     documentAnalysisChain = documentAnalysisChain.then(task).catch((error) => {
@@ -402,6 +502,7 @@ export function createPhpstanDiagnosticsService(params: {
     const resolvedRuntime = await resolvePhpstanRuntime(filePath);
     const { command, tempFilePath, editorModeUsed } = await buildAnalyzeCommandForDocument(
       resolvedRuntime,
+      settings,
       filePath,
       document.getText(),
       versionSupportCache,
@@ -448,7 +549,22 @@ export function createPhpstanDiagnosticsService(params: {
   }
 
   return {
-    schedule(document: TextDocument): void {
+    updateSettings(incoming: PhpstanDiagnosticsSettingsUpdate): void {
+      settings = mergeSettings(settings, incoming);
+      if (settings.enableDiagnostics) {
+        return;
+      }
+      for (const uri of versions.keys()) {
+        publishDiagnostics(uri, []);
+      }
+    },
+    schedule(document: TextDocument, trigger: ScheduleTrigger): void {
+      if (!settings.enableDiagnostics) {
+        return;
+      }
+      if (settings.runOnDidSaveOnly && trigger !== 'save') {
+        return;
+      }
       versions.set(document.uri, document.version);
       const existing = timers.get(document.uri);
       if (existing) {

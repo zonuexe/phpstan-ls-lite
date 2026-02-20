@@ -11,7 +11,11 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { resolvePhpstanRuntime } from './runtime/phpstanCommand.js';
-import { createPhpstanDiagnosticsService } from './diagnostics/phpstanDiagnostics.js';
+import {
+  createPhpstanDiagnosticsService,
+  type PhpstanDiagnosticsSettings,
+  type PhpstanDiagnosticsSettingsUpdate,
+} from './diagnostics/phpstanDiagnostics.js';
 
 const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
@@ -28,6 +32,85 @@ const diagnosticsService = createPhpstanDiagnosticsService({
 });
 let workspaceFolders: WorkspaceFolder[] = [];
 let supportsWorkspaceFolderChange = false;
+
+function parseCommandOverride(
+  value: unknown,
+): PhpstanDiagnosticsSettings['phpstan']['commandOverride'] | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const raw = value as { command?: unknown; args?: unknown };
+  if (typeof raw.command !== 'string' || raw.command.length === 0) {
+    return undefined;
+  }
+  if (!Array.isArray(raw.args)) {
+    return { command: raw.command };
+  }
+  const args = raw.args.filter((arg): arg is string => typeof arg === 'string');
+  return { command: raw.command, args };
+}
+
+function parseDiagnosticsSettings(value: unknown): PhpstanDiagnosticsSettingsUpdate {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  const raw = value as {
+    enableDiagnostics?: unknown;
+    runOnDidSaveOnly?: unknown;
+    phpstan?: {
+      extraArgs?: unknown;
+      commandOverride?: unknown;
+    };
+  };
+  const result: PhpstanDiagnosticsSettingsUpdate = {};
+  if (typeof raw.enableDiagnostics === 'boolean') {
+    result.enableDiagnostics = raw.enableDiagnostics;
+  }
+  if (typeof raw.runOnDidSaveOnly === 'boolean') {
+    result.runOnDidSaveOnly = raw.runOnDidSaveOnly;
+  }
+  const phpstanSettings: NonNullable<PhpstanDiagnosticsSettingsUpdate['phpstan']> = {};
+  if (Array.isArray(raw.phpstan?.extraArgs)) {
+    phpstanSettings.extraArgs = raw.phpstan.extraArgs.filter(
+      (arg): arg is string => typeof arg === 'string',
+    );
+  }
+  const commandOverride = parseCommandOverride(raw.phpstan?.commandOverride);
+  if (commandOverride !== undefined) {
+    phpstanSettings.commandOverride = commandOverride;
+  }
+  if (Object.keys(phpstanSettings).length > 0) {
+    result.phpstan = phpstanSettings;
+  }
+  return result;
+}
+
+function readSettingsFromPayload(payload: unknown): PhpstanDiagnosticsSettingsUpdate {
+  if (!payload || typeof payload !== 'object') {
+    return {};
+  }
+  const raw = payload as {
+    phpstanLsLite?: unknown;
+    ['@zonuexe/phpstan-ls-lite']?: unknown;
+    settings?: unknown;
+  };
+  const direct = parseDiagnosticsSettings(payload);
+  const scoped = parseDiagnosticsSettings(raw.phpstanLsLite);
+  const scopedByName = parseDiagnosticsSettings(raw['@zonuexe/phpstan-ls-lite']);
+  const nested = parseDiagnosticsSettings(raw.settings);
+  return {
+    ...direct,
+    ...scoped,
+    ...scopedByName,
+    ...nested,
+    phpstan: {
+      ...direct.phpstan,
+      ...scoped.phpstan,
+      ...scopedByName.phpstan,
+      ...nested.phpstan,
+    },
+  };
+}
 
 function workspaceUriToPath(uri: string): string | null {
   try {
@@ -63,6 +146,7 @@ async function logResolvedRuntimes(): Promise<void> {
 
 connection.onInitialize((params: InitializeParams) => {
   supportsWorkspaceFolderChange = params.capabilities.workspace?.workspaceFolders === true;
+  diagnosticsService.updateSettings(readSettingsFromPayload(params.initializationOptions));
 
   if (params.workspaceFolders && params.workspaceFolders.length > 0) {
     workspaceFolders = params.workspaceFolders;
@@ -100,15 +184,15 @@ connection.onInitialized(() => {
 });
 
 documents.onDidOpen((event) => {
-  diagnosticsService.schedule(event.document);
+  diagnosticsService.schedule(event.document, 'open');
 });
 
 documents.onDidChangeContent((event) => {
-  diagnosticsService.schedule(event.document);
+  diagnosticsService.schedule(event.document, 'change');
 });
 
 documents.onDidSave((event) => {
-  diagnosticsService.schedule(event.document);
+  diagnosticsService.schedule(event.document, 'save');
 });
 
 documents.onDidClose((event) => {
@@ -121,6 +205,10 @@ connection.onDocumentSymbol(() => {
 
 connection.onCompletion(() => {
   return [];
+});
+
+connection.onDidChangeConfiguration((params) => {
+  diagnosticsService.updateSettings(readSettingsFromPayload(params.settings));
 });
 
 connection.onShutdown(() => {

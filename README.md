@@ -20,8 +20,6 @@ Current implementation focuses on diagnostics and runtime detection.
   2. `config.vendor-dir` + `bin/phpstan`
   3. default `vendor/bin/phpstan`
   4. `bamarni/composer-bin-plugin` (`vendor-bin` or custom target directory)
-- Startup full-project analysis per workspace
-- Graceful continue when startup analysis crashes (user notification + logs)
 - Incremental diagnostics on:
   - `textDocument/didOpen`
   - `textDocument/didChange`
@@ -84,6 +82,40 @@ new LanguageClient(
   { command: "npx", args: ["--yes", "@zonuexe/phpstan-ls-lite"] },
   { documentSelector: [{ language: "php" }] }
 );
+```
+
+## Client Settings
+
+The server accepts settings from both `initialize.initializationOptions` and
+`workspace/didChangeConfiguration`.
+
+Supported keys:
+
+- `enableDiagnostics: boolean`
+- `runOnDidSaveOnly: boolean`
+- `phpstan.extraArgs: string[]`
+- `phpstan.commandOverride: { command: string; args?: string[] } | null`
+
+Accepted roots for these keys:
+
+- top-level object
+- `phpstanLsLite`
+- `@zonuexe/phpstan-ls-lite`
+- `settings`
+
+Example:
+
+```json
+{
+  "phpstanLsLite": {
+    "enableDiagnostics": true,
+    "runOnDidSaveOnly": false,
+    "phpstan": {
+      "extraArgs": ["--memory-limit=1G"],
+      "commandOverride": null
+    }
+  }
+}
 ```
 
 ## Copyright
