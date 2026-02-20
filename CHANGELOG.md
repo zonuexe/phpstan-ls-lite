@@ -19,11 +19,14 @@ All notable changes of `phpstan-ls-lite` are documented in this file using the [
 ### Changed
 
  * Removed startup full-project analysis; diagnostics now run per-document from open/change/save events.
+ * Inlay hints and hover now prioritize PHPStan-based analysis paths (Scope/Reflection) instead of local heuristic parsing.
+ * Reflection worker now uses PHPStan RichParser for interactive features so method/function bodies are analyzed.
 
 ### Fixed
 
  * Improved diagnostics fallback when PHPStan exits with errors by surfacing execution-failure diagnostics.
  * Added support for top-level PHPStan JSON `errors` as diagnostics when file-level messages are unavailable.
+ * Fixed missing inlay hints in real projects where SimpleParser omitted call sites.
 
 ## 0.0.2 - 2026-02-19
 

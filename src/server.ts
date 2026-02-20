@@ -2,6 +2,7 @@
 
 import {
   createConnection,
+  InlayHintKind,
   ProposedFeatures,
   TextDocuments,
   TextDocumentSyncKind,
@@ -11,6 +12,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { resolvePhpstanRuntime } from './runtime/phpstanCommand.js';
+import { createPhpProcessReflectionClient } from './reflection/phpstanReflectionClient.js';
 import {
   createPhpstanDiagnosticsService,
   type PhpstanDiagnosticsSettings,
@@ -19,6 +21,18 @@ import {
 
 const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+const reflectionWorkerPath = fileURLToPath(
+  new URL('../php/phpstan-reflection-worker.php', import.meta.url),
+);
+const reflectionClient = createPhpProcessReflectionClient({
+  workerScriptPath: reflectionWorkerPath,
+  logger: (message) => {
+    connection.console.error(message);
+  },
+  loggerInfo: (message) => {
+    connection.console.info(message);
+  },
+});
 const diagnosticsService = createPhpstanDiagnosticsService({
   publishDiagnostics: (uri, diagnostics) => {
     connection.sendDiagnostics({ uri, diagnostics });
@@ -32,6 +46,17 @@ const diagnosticsService = createPhpstanDiagnosticsService({
 });
 let workspaceFolders: WorkspaceFolder[] = [];
 let supportsWorkspaceFolderChange = false;
+
+function utf16OffsetToUtf8ByteOffset(text: string, utf16Offset: number): number {
+  const clamped = Math.max(0, Math.min(utf16Offset, text.length));
+  return Buffer.byteLength(text.slice(0, clamped), 'utf8');
+}
+
+function utf8ByteOffsetToUtf16Offset(text: string, utf8ByteOffset: number): number {
+  const bytes = Buffer.from(text, 'utf8');
+  const clamped = Math.max(0, Math.min(utf8ByteOffset, bytes.length));
+  return bytes.subarray(0, clamped).toString('utf8').length;
+}
 
 function parseCommandOverride(
   value: unknown,
@@ -167,12 +192,17 @@ connection.onInitialize((params: InitializeParams) => {
         resolveProvider: false,
         triggerCharacters: ['$', '-', '>'],
       },
+      inlayHintProvider: true,
+      hoverProvider: true,
     },
   };
 });
 
 connection.onInitialized(() => {
   void logResolvedRuntimes();
+  void reflectionClient.ping().then((ok) => {
+    connection.console.info(`[reflection] worker health: ${ok ? 'ok' : 'failed'}`);
+  });
   if (supportsWorkspaceFolderChange) {
     connection.workspace.onDidChangeWorkspaceFolders((event) => {
       const removedUris = new Set(event.removed.map((folder) => folder.uri));
@@ -207,11 +237,89 @@ connection.onCompletion(() => {
   return [];
 });
 
+connection.languages.inlayHint.on(async (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return [];
+  }
+  const text = document.getText();
+  const hints: {
+    position: { line: number; character: number };
+    label: string;
+    kind: InlayHintKind;
+    paddingRight: boolean;
+  }[] = [];
+  const filePath = workspaceUriToPath(params.textDocument.uri);
+  if (!filePath) {
+    return hints;
+  }
+  const rangeStartUtf16 = document.offsetAt(params.range.start);
+  const rangeEndUtf16 = document.offsetAt(params.range.end);
+  const reflection = await reflectionClient.resolveNodeContext({
+    filePath,
+    cursorOffset: rangeStartUtf16,
+    rangeStartOffset: utf16OffsetToUtf8ByteOffset(text, rangeStartUtf16),
+    rangeEndOffset: utf16OffsetToUtf8ByteOffset(text, rangeEndUtf16),
+    text,
+    capabilities: ['callArguments'],
+  });
+  for (const call of reflection?.callArguments ?? []) {
+    for (const hint of call.hints) {
+      if (hint.hide) {
+        continue;
+      }
+      const utf16Offset = utf8ByteOffsetToUtf16Offset(text, hint.argumentStartOffset);
+      const position = document.positionAt(utf16Offset);
+      hints.push({
+        position,
+        label: `$${hint.parameterName}:`,
+        kind: InlayHintKind.Parameter,
+        paddingRight: true,
+      });
+    }
+  }
+  const dedup = new Map<string, (typeof hints)[number]>();
+  for (const hint of hints) {
+    const key = `${hint.position.line}:${hint.position.character}:${String(hint.label)}`;
+    dedup.set(key, hint);
+  }
+  return [...dedup.values()];
+});
+
+connection.onHover(async (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return null;
+  }
+  const filePath = workspaceUriToPath(params.textDocument.uri);
+  if (!filePath) {
+    return null;
+  }
+  const text = document.getText();
+  const cursorUtf16 = document.offsetAt(params.position);
+  const result = await reflectionClient.resolveNodeContext({
+    filePath,
+    cursorOffset: utf16OffsetToUtf8ByteOffset(text, cursorUtf16),
+    text,
+    capabilities: ['hover'],
+  });
+  if (!result?.hover) {
+    return null;
+  }
+  return {
+    contents: {
+      kind: 'markdown',
+      value: result.hover.markdown,
+    },
+  };
+});
+
 connection.onDidChangeConfiguration((params) => {
   diagnosticsService.updateSettings(readSettingsFromPayload(params.settings));
 });
 
 connection.onShutdown(() => {
+  reflectionClient.dispose();
   diagnosticsService.dispose();
 });
 

@@ -10,6 +10,7 @@
   },
   "files": [
     "dist",
+    "php",
     "!dist/**/__tests__/**"
   ],
   "scripts": {

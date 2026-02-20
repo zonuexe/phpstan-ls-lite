@@ -7,6 +7,7 @@ The project focuses on:
 - compact and maintainable implementation with clear, predictable structure
 - practical features with as little overhead as possible
 - aiming for as-complete-as-possible support of the latest PHPStan
+- maximizing PHPStan capabilities to provide precise and reliable type information
 
 ## Status (v0.0.3)
 
@@ -34,6 +35,12 @@ Current implementation focuses on diagnostics and runtime detection.
 - Hover
 - Code actions
 - Completion
+
+### Planned Architecture (Reflection Bridge)
+
+- Use a lightweight PHP bridge process backed by PHPStan Reflection for interactive features.
+- Fetch hover and call-argument metadata in one query to reduce repeated analysis cost.
+- Keep the current lightweight fallback path for environments where bridge features are unavailable.
 
 ## Requirements
 
