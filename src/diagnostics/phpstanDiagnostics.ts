@@ -288,6 +288,11 @@ function createGlobalErrorDiagnostic(message: string): Diagnostic {
   };
 }
 
+function hasPhpSyntaxError(stdout: string, stderr: string): boolean {
+  const text = `${stdout}\n${stderr}`.toLowerCase();
+  return text.includes('parse error') || text.includes('syntax error');
+}
+
 function extractGlobalErrors(outputText: string): Diagnostic[] {
   let parsed: unknown;
   try {
@@ -454,6 +459,24 @@ async function buildAnalyzeCommandForDocument(
   };
 }
 
+function buildAnalyzeCommandForSavedFile(
+  resolvedRuntime: ResolvedPhpstanRuntime,
+  settings: PhpstanDiagnosticsSettings,
+  filePath: string,
+): PhpstanAnalyzeCommand {
+  const baseCommand = buildPhpstanAnalyzeCommand({
+    resolvedRuntime,
+    targets: [filePath],
+    errorFormat: 'json',
+  });
+  const extraArgsCommand = {
+    command: baseCommand.command,
+    cwd: baseCommand.cwd,
+    args: injectArgsBeforeTargetSeparator(baseCommand.args, settings.phpstan.extraArgs),
+  };
+  return applyCommandOverride(extraArgsCommand, settings.phpstan.commandOverride);
+}
+
 export function createPhpstanDiagnosticsService(params: {
   publishDiagnostics: PublishDiagnostics;
   logger?: LogMessage;
@@ -540,7 +563,40 @@ export function createPhpstanDiagnosticsService(params: {
         diagnostics = extractGlobalErrors(result.stdout);
       }
       if (diagnostics.length === 0 && result.code !== 0 && result.stderr.trim().length > 0) {
-        diagnostics = [createExecutionFailureDiagnostic(result.code, result.stderr)];
+        if (hasPhpSyntaxError(result.stdout, result.stderr)) {
+          const fallbackCommand = buildAnalyzeCommandForSavedFile(
+            resolvedRuntime,
+            settings,
+            filePath,
+          );
+          loggerInfo(
+            `[diagnostics] syntax error detected in unsaved buffer; falling back to saved file analysis for ${filePath}. command="${formatCommandForLog(fallbackCommand.command, fallbackCommand.args)}"`,
+          );
+          const fallbackResult = await runProcess(fallbackCommand);
+          const fallbackStaleVersion = versions.get(document.uri);
+          if (fallbackStaleVersion !== document.version) {
+            return;
+          }
+          diagnostics = extractDiagnosticsForFile(
+            fallbackResult.stdout,
+            filePath,
+            fallbackCommand.cwd,
+          );
+          if (diagnostics.length === 0) {
+            diagnostics = extractGlobalErrors(fallbackResult.stdout);
+          }
+          if (
+            diagnostics.length === 0 &&
+            fallbackResult.code !== 0 &&
+            fallbackResult.stderr.trim().length > 0
+          ) {
+            diagnostics = [
+              createExecutionFailureDiagnostic(fallbackResult.code, fallbackResult.stderr),
+            ];
+          }
+        } else {
+          diagnostics = [createExecutionFailureDiagnostic(result.code, result.stderr)];
+        }
       }
       publishDiagnostics(document.uri, diagnostics);
     } finally {
@@ -610,6 +666,7 @@ export function createPhpstanDiagnosticsService(params: {
 
 export const _internal = {
   createExecutionFailureDiagnostic,
+  hasPhpSyntaxError,
   extractGlobalErrors,
   extractDiagnosticsForFile,
   extractDiagnosticsByFile,

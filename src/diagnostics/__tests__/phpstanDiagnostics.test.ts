@@ -106,3 +106,16 @@ describe('extractGlobalErrors', () => {
     assert.match(diagnostics[0]?.message ?? '', /Internal error happened/);
   });
 });
+
+describe('hasPhpSyntaxError', () => {
+  it('detects syntax error text from stderr', () => {
+    assert.equal(
+      _internal.hasPhpSyntaxError('', 'PHP Parse error: syntax error, unexpected token ";"'),
+      true,
+    );
+  });
+
+  it('returns false when output does not contain parse markers', () => {
+    assert.equal(_internal.hasPhpSyntaxError('{"files":{}}', ''), false);
+  });
+});
