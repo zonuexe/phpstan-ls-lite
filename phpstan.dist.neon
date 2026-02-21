@@ -1,0 +1,9 @@
+parameters:
+	level: 8
+	phpVersion: 80500
+	paths:
+		- php/
+	bootstrapFiles:
+		- vendor-bin/ecs/vendor/symplify/easy-coding-standard/vendor/autoload.php
+includes:
+	- vendor-bin/phpstan/vendor/phpstan/phpstan/conf/bleedingEdge.neon
