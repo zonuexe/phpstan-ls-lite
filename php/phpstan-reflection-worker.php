@@ -19,7 +19,6 @@ use PhpParser\Node\Stmt\Function_;
 use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\Node\VarLikeIdentifier;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\OutOfClassScope;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeContext;
 use PHPStan\Analyser\ScopeFactory;
@@ -36,7 +35,6 @@ use PHPStan\Type\VerbosityLevel;
 /**
  * @phpstan-type reflection_state array{
  *   provider:ReflectionProvider,
- *   scope:OutOfClassScope,
  *   parser:Parser,
  *   nodeScopeResolver:NodeScopeResolver,
  *   scopeFactory:ScopeFactory
@@ -44,7 +42,6 @@ use PHPStan\Type\VerbosityLevel;
  * @phpstan-type reflection_state_with_root array{
  *   root:string,
  *   provider:ReflectionProvider,
- *   scope:OutOfClassScope,
  *   parser:Parser,
  *   nodeScopeResolver:NodeScopeResolver,
  *   scopeFactory:ScopeFactory
@@ -177,7 +174,6 @@ final class PhpstanReflectionWorker
             return [
                 'root' => $root,
                 'provider' => $state['provider'],
-                'scope' => $state['scope'],
                 'parser' => $state['parser'],
                 'nodeScopeResolver' => $state['nodeScopeResolver'],
                 'scopeFactory' => $state['scopeFactory'],
@@ -185,7 +181,7 @@ final class PhpstanReflectionWorker
         }
 
         $this->ensureProjectAutoload($filePath);
-        if (!class_exists(ContainerFactory::class) || !class_exists(OutOfClassScope::class)) {
+        if (!class_exists(ContainerFactory::class)) {
             return null;
         }
 
@@ -229,7 +225,6 @@ final class PhpstanReflectionWorker
                 );
 
                 $provider = $container->getByType(ReflectionProvider::class);
-                $scope = new OutOfClassScope();
                 $parser = null;
                 if ($container->hasService('currentPhpVersionRichParser')) {
                     $resolvedParser = $container->getService('currentPhpVersionRichParser');
@@ -246,7 +241,6 @@ final class PhpstanReflectionWorker
 
                 $reflectionState = [
                     'provider' => $provider,
-                    'scope' => $scope,
                     'parser' => $parser,
                     'nodeScopeResolver' => $nodeScopeResolver,
                     'scopeFactory' => $scopeFactory,
@@ -256,7 +250,6 @@ final class PhpstanReflectionWorker
                 return [
                     'root' => $root,
                     'provider' => $reflectionState['provider'],
-                    'scope' => $reflectionState['scope'],
                     'parser' => $reflectionState['parser'],
                     'nodeScopeResolver' => $reflectionState['nodeScopeResolver'],
                     'scopeFactory' => $reflectionState['scopeFactory'],
