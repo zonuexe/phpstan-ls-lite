@@ -1,6 +1,6 @@
 export const REFLECTION_PROTOCOL_VERSION = 1;
 
-export type ReflectionCapability = 'hover' | 'callArguments';
+export type ReflectionCapability = 'hover' | 'callArguments' | 'definition';
 
 export type ReflectionRequest =
   | {
@@ -41,6 +41,13 @@ export type ReflectionCallArgumentPayload = {
 export type ReflectionSuccessResult = {
   hover?: ReflectionHoverPayload;
   callArguments?: ReflectionCallArgumentPayload[];
+  definitions?: ReflectionDefinitionLocation[];
+};
+
+export type ReflectionDefinitionLocation = {
+  filePath: string;
+  line: number;
+  character: number;
 };
 
 export type ReflectionErrorResult = {

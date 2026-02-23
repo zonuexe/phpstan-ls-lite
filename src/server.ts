@@ -9,7 +9,7 @@ import {
 } from 'vscode-languageserver/node.js';
 import type { InitializeParams, WorkspaceFolder } from 'vscode-languageserver/node.js';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { resolvePhpstanRuntime } from './runtime/phpstanCommand.js';
 import { createPhpProcessReflectionClient } from './reflection/phpstanReflectionClient.js';
@@ -148,6 +148,10 @@ function workspaceUriToPath(uri: string): string | null {
   }
 }
 
+function filePathToUri(filePath: string): string {
+  return pathToFileURL(filePath).toString();
+}
+
 async function logResolvedRuntimes(): Promise<void> {
   for (const folder of workspaceFolders) {
     const folderPath = workspaceUriToPath(folder.uri);
@@ -194,6 +198,7 @@ connection.onInitialize((params: InitializeParams) => {
       },
       inlayHintProvider: true,
       hoverProvider: true,
+      definitionProvider: true,
     },
   };
 });
@@ -312,6 +317,36 @@ connection.onHover(async (params) => {
       value: result.hover.markdown,
     },
   };
+});
+
+connection.onDefinition(async (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return null;
+  }
+  const filePath = workspaceUriToPath(params.textDocument.uri);
+  if (!filePath) {
+    return null;
+  }
+  const text = document.getText();
+  const cursorUtf16 = document.offsetAt(params.position);
+  const result = await reflectionClient.resolveNodeContext({
+    filePath,
+    cursorOffset: utf16OffsetToUtf8ByteOffset(text, cursorUtf16),
+    text,
+    capabilities: ['definition'],
+  });
+  const definitions = result?.definitions ?? [];
+  if (definitions.length === 0) {
+    return null;
+  }
+  return definitions.map((definition) => ({
+    uri: filePathToUri(definition.filePath),
+    range: {
+      start: { line: definition.line, character: definition.character },
+      end: { line: definition.line, character: definition.character },
+    },
+  }));
 });
 
 connection.onDidChangeConfiguration((params) => {

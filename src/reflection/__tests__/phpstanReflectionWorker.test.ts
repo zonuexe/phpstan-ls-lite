@@ -171,4 +171,226 @@ class C {
     assert.ok(visibleNames.includes('y'));
     assert.ok(visibleNames.includes('v'));
   });
+
+  it('returns definition for nested user-defined method call', () => {
+    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
+    if (phpProbe.status !== 0) {
+      return;
+    }
+
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    const phpFile = path.join(tmpRoot, 'definition-nested-method.php');
+    const code = `<?php
+class C {
+  public function outer(int $x, int $y): void {}
+  public function inner(string $v): int { return 1; }
+  public function test(): void {
+    $this->outer(1, $this->inner('a'));
+  }
+}
+`;
+    fs.writeFileSync(phpFile, code, 'utf8');
+    const innerCallOffset = Buffer.byteLength(code.slice(0, code.indexOf('$this->inner(') + 7), 'utf8');
+
+    const request = {
+      protocolVersion: 1,
+      id: 'test-4',
+      method: 'resolveNodeContext',
+      params: {
+        filePath: phpFile,
+        cursorOffset: innerCallOffset,
+        text: code,
+        capabilities: ['definition'],
+      },
+    };
+
+    const proc = spawnSync('php', [workerPath], {
+      input: `${JSON.stringify(request)}\n`,
+      encoding: 'utf8',
+    });
+    assert.equal(proc.status, 0, proc.stderr);
+    const line = proc.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+    assert.notEqual(line, '');
+    const response = JSON.parse(line) as {
+      ok: boolean;
+      result?: {
+        definitions?: Array<{ filePath: string; line: number; character: number }>;
+      };
+    };
+    assert.equal(response.ok, true);
+    const definitions = response.result?.definitions ?? [];
+    assert.ok(definitions.length > 0);
+    assert.equal(definitions[0]?.filePath, phpFile);
+  });
+
+  it('returns definition for class name usage', () => {
+    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
+    if (phpProbe.status !== 0) {
+      return;
+    }
+
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    const phpFile = path.join(tmpRoot, 'definition-class.php');
+    const code = `<?php
+class Target {}
+class User {
+  public function run(): void {
+    $x = new Target();
+  }
+}
+`;
+    fs.writeFileSync(phpFile, code, 'utf8');
+    const classUsageOffset = Buffer.byteLength(code.slice(0, code.indexOf('new Target(') + 5), 'utf8');
+
+    const request = {
+      protocolVersion: 1,
+      id: 'test-5',
+      method: 'resolveNodeContext',
+      params: {
+        filePath: phpFile,
+        cursorOffset: classUsageOffset,
+        text: code,
+        capabilities: ['definition'],
+      },
+    };
+
+    const proc = spawnSync('php', [workerPath], {
+      input: `${JSON.stringify(request)}\n`,
+      encoding: 'utf8',
+    });
+    assert.equal(proc.status, 0, proc.stderr);
+    const line = proc.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+    assert.notEqual(line, '');
+    const response = JSON.parse(line) as {
+      ok: boolean;
+      result?: {
+        definitions?: Array<{ filePath: string; line: number; character: number }>;
+      };
+    };
+    assert.equal(response.ok, true);
+    const definitions = response.result?.definitions ?? [];
+    assert.ok(definitions.length > 0);
+    assert.equal(definitions[0]?.filePath, phpFile);
+    assert.equal(definitions[0]?.line, 1);
+  });
+
+  it('returns definition for class const fetch usage', () => {
+    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
+    if (phpProbe.status !== 0) {
+      return;
+    }
+
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    const phpFile = path.join(tmpRoot, 'definition-class-const-fetch.php');
+    const code = `<?php
+class Target {
+  public const BAR = 1;
+}
+class User {
+  public function run(): void {
+    $a = Target::BAR;
+    $b = Target::class;
+  }
+}
+`;
+    fs.writeFileSync(phpFile, code, 'utf8');
+
+    const testOffsets = [
+      Buffer.byteLength(code.slice(0, code.indexOf('Target::BAR') + 1), 'utf8'),
+      Buffer.byteLength(code.slice(0, code.indexOf('Target::class') + 1), 'utf8'),
+    ];
+
+    for (const [index, cursorOffset] of testOffsets.entries()) {
+      const request = {
+        protocolVersion: 1,
+        id: `test-6-${index}`,
+        method: 'resolveNodeContext',
+        params: {
+          filePath: phpFile,
+          cursorOffset,
+          text: code,
+          capabilities: ['definition'],
+        },
+      };
+
+      const proc = spawnSync('php', [workerPath], {
+        input: `${JSON.stringify(request)}\n`,
+        encoding: 'utf8',
+      });
+      assert.equal(proc.status, 0, proc.stderr);
+      const line = proc.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+      assert.notEqual(line, '');
+      const response = JSON.parse(line) as {
+        ok: boolean;
+        result?: {
+          definitions?: Array<{ filePath: string; line: number; character: number }>;
+        };
+      };
+      assert.equal(response.ok, true);
+      const definitions = response.result?.definitions ?? [];
+      assert.ok(definitions.length > 0);
+      assert.equal(definitions[0]?.filePath, phpFile);
+      assert.equal(definitions[0]?.line, 1);
+    }
+  });
+
+  it('returns definition for static method and static property usage', () => {
+    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
+    if (phpProbe.status !== 0) {
+      return;
+    }
+
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    const phpFile = path.join(tmpRoot, 'definition-static-members.php');
+    const code = `<?php
+class Target {
+  public static int $bar = 1;
+  public static function baz(): void {}
+}
+class User {
+  public function run(): void {
+    $x = Target::$bar;
+    Target::baz();
+  }
+}
+`;
+    fs.writeFileSync(phpFile, code, 'utf8');
+
+    const testOffsets = [
+      Buffer.byteLength(code.slice(0, code.indexOf('Target::$bar') + 9), 'utf8'),
+      Buffer.byteLength(code.slice(0, code.indexOf('Target::baz(') + 9), 'utf8'),
+    ];
+
+    for (const [index, cursorOffset] of testOffsets.entries()) {
+      const request = {
+        protocolVersion: 1,
+        id: `test-7-${index}`,
+        method: 'resolveNodeContext',
+        params: {
+          filePath: phpFile,
+          cursorOffset,
+          text: code,
+          capabilities: ['definition'],
+        },
+      };
+
+      const proc = spawnSync('php', [workerPath], {
+        input: `${JSON.stringify(request)}\n`,
+        encoding: 'utf8',
+      });
+      assert.equal(proc.status, 0, proc.stderr);
+      const line = proc.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+      assert.notEqual(line, '');
+      const response = JSON.parse(line) as {
+        ok: boolean;
+        result?: {
+          definitions?: Array<{ filePath: string; line: number; character: number }>;
+        };
+      };
+      assert.equal(response.ok, true);
+      const definitions = response.result?.definitions ?? [];
+      assert.ok(definitions.length > 0);
+      assert.equal(definitions[0]?.filePath, phpFile);
+    }
+  });
 });
