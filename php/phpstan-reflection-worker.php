@@ -10,8 +10,6 @@ use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
-use PhpParser\NodeTraverser;
-use PhpParser\NodeVisitorAbstract;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\OutOfClassScope;
 use PHPStan\Analyser\Scope;
@@ -29,17 +27,17 @@ use PHPStan\Type\VerbosityLevel;
  * @phpstan-type reflection_state array{
  *   provider:ReflectionProvider,
  *   scope:OutOfClassScope,
- *   parser:?Parser,
- *   nodeScopeResolver:?NodeScopeResolver,
- *   scopeFactory:?ScopeFactory
+ *   parser:Parser,
+ *   nodeScopeResolver:NodeScopeResolver,
+ *   scopeFactory:ScopeFactory
  * }
  * @phpstan-type reflection_state_with_root array{
  *   root:string,
  *   provider:ReflectionProvider,
  *   scope:OutOfClassScope,
- *   parser:?Parser,
- *   nodeScopeResolver:?NodeScopeResolver,
- *   scopeFactory:?ScopeFactory
+ *   parser:Parser,
+ *   nodeScopeResolver:NodeScopeResolver,
+ *   scopeFactory:ScopeFactory
  * }
  * @phpstan-type request_error array{code:string,message:string}
  * @phpstan-type argument_hint array{
@@ -178,12 +176,6 @@ final class PhpstanReflectionWorker
             }
         }
 
-        $provider = null;
-        $scope = null;
-        $parser = null;
-        $nodeScopeResolver = null;
-        $scopeFactory = null;
-
         $tmpDir = sys_get_temp_dir() . '/phpstan-ls-lite/' . sha1($root);
         if (!is_dir($tmpDir)) {
             @mkdir($tmpDir, 0777, true);
@@ -216,45 +208,42 @@ final class PhpstanReflectionWorker
 
                 $provider = $container->getByType(ReflectionProvider::class);
                 $scope = new OutOfClassScope();
+                $parser = null;
                 if ($container->hasService('currentPhpVersionRichParser')) {
-                    $parser = $container->getService('currentPhpVersionRichParser');
+                    $resolvedParser = $container->getService('currentPhpVersionRichParser');
+                    $parser = $resolvedParser instanceof Parser ? $resolvedParser : null;
                 } elseif ($container->hasService('currentPhpVersionSimpleParser')) {
-                    $parser = $container->getService('currentPhpVersionSimpleParser');
+                    $resolvedParser = $container->getService('currentPhpVersionSimpleParser');
+                    $parser = $resolvedParser instanceof Parser ? $resolvedParser : null;
+                }
+                if ($parser === null) {
+                    continue;
                 }
                 $nodeScopeResolver = $container->getByType(NodeScopeResolver::class);
                 $scopeFactory = $container->getByType(ScopeFactory::class);
-                break;
+
+                $reflectionState = [
+                    'provider' => $provider,
+                    'scope' => $scope,
+                    'parser' => $parser,
+                    'nodeScopeResolver' => $nodeScopeResolver,
+                    'scopeFactory' => $scopeFactory,
+                ];
+                $this->reflectionStateByRoot[$root] = $reflectionState;
+
+                return [
+                    'root' => $root,
+                    'provider' => $reflectionState['provider'],
+                    'scope' => $reflectionState['scope'],
+                    'parser' => $reflectionState['parser'],
+                    'nodeScopeResolver' => $reflectionState['nodeScopeResolver'],
+                    'scopeFactory' => $reflectionState['scopeFactory'],
+                ];
             } catch (Throwable) {
-                $provider = null;
-                $scope = null;
-                $parser = null;
-                $nodeScopeResolver = null;
-                $scopeFactory = null;
                 continue;
             }
         }
-
-        if (!$provider instanceof ReflectionProvider || !$scope instanceof OutOfClassScope) {
-            return null;
-        }
-
-        $reflectionState = [
-            'provider' => $provider,
-            'scope' => $scope,
-            'parser' => $parser instanceof Parser ? $parser : null,
-            'nodeScopeResolver' => $nodeScopeResolver instanceof NodeScopeResolver ? $nodeScopeResolver : null,
-            'scopeFactory' => $scopeFactory instanceof ScopeFactory ? $scopeFactory : null,
-        ];
-        $this->reflectionStateByRoot[$root] = $reflectionState;
-
-        return [
-            'root' => $root,
-            'provider' => $reflectionState['provider'],
-            'scope' => $reflectionState['scope'],
-            'parser' => $reflectionState['parser'],
-            'nodeScopeResolver' => $reflectionState['nodeScopeResolver'],
-            'scopeFactory' => $reflectionState['scopeFactory'],
-        ];
+        return null;
     }
 
     /**
@@ -363,7 +352,9 @@ final class PhpstanReflectionWorker
 
         // @phpstan-ignore phpstanApi.interface
         $answerer = new class($namespace) implements NamespaceAnswerer {
-            public function __construct(private string $namespace)
+            public function __construct(
+                private string $namespace
+            )
             {
             }
 
@@ -478,41 +469,21 @@ final class PhpstanReflectionWorker
             return [];
         }
 
-        $classNames = [];
-        try {
-            foreach ($type->getObjectClassNames() as $name) {
-                if (is_string($name) && $name !== '') {
-                    $classNames[] = $name;
-                }
-            }
-        } catch (Throwable) {
-            // Ignore and try reflections.
-        }
-
-        if (count($classNames) === 0) {
-            try {
-                foreach ($type->getObjectClassReflections() as $classReflection) {
-                    if ($classReflection instanceof ClassReflection) {
-                        $classNames[] = $classReflection->getName();
-                    }
-                }
-            } catch (Throwable) {
-                return [];
-            }
-        }
-
-        foreach (array_values(array_unique($classNames)) as $className) {
-            try {
-                if (!$provider->hasClass($className)) {
-                    continue;
-                }
-                $classReflection = $provider->getClass($className);
-                $params = $this->getMethodParameterNamesFromClassReflection($classReflection, $scope, $methodName);
-                if (count($params) > 0) {
-                    return $params;
-                }
-            } catch (Throwable) {
+        foreach ($type->getObjectClassNames() as $className) {
+            if (!$provider->hasClass($className)) {
                 continue;
+            }
+            $classReflection = $provider->getClass($className);
+            $params = $this->getMethodParameterNamesFromClassReflection($classReflection, $scope, $methodName);
+            if (count($params) > 0) {
+                return $params;
+            }
+        }
+
+        foreach ($type->getObjectClassReflections() as $classReflection) {
+            $params = $this->getMethodParameterNamesFromClassReflection($classReflection, $scope, $methodName);
+            if (count($params) > 0) {
+                return $params;
             }
         }
 
@@ -534,10 +505,6 @@ final class PhpstanReflectionWorker
         } catch (Throwable) {
             return null;
         }
-        if (!is_array($stmts) || !class_exists(ScopeContext::class)) {
-            return null;
-        }
-
         $scopeContext = ScopeContext::create($filePath);
         $scope = $reflectionState['scopeFactory']->create($scopeContext, null);
         $candidateOffsets = [$cursorOffset];
@@ -574,7 +541,7 @@ final class PhpstanReflectionWorker
                 } catch (Throwable) {
                     return;
                 }
-                if (!is_string($typeString) || $typeString === '') {
+                if ($typeString === '') {
                     return;
                 }
 
@@ -584,7 +551,7 @@ final class PhpstanReflectionWorker
                 }
 
                 $exprText = substr($text, $start, $len);
-                if (!is_string($exprText) || $exprText === '') {
+                if ($exprText === '') {
                     return;
                 }
                 $exprText = trim(preg_replace('/\s+/', ' ', $exprText) ?? '');
@@ -622,7 +589,7 @@ final class PhpstanReflectionWorker
     }
 
     /**
-     * @return ?list<call_argument_payload>
+     * @return list<call_argument_payload>
      * @param reflection_state_with_root $reflectionState
      */
     private function collectCallArgumentPayloadFromScope(
@@ -631,218 +598,150 @@ final class PhpstanReflectionWorker
         int $rangeStart,
         int $rangeEnd,
         array $reflectionState
-    ): ?array {
+    ): array {
         try {
             $stmts = $reflectionState['parser']->parseString($text);
         } catch (Throwable) {
             return [];
         }
-        if (!is_array($stmts) || !class_exists(ScopeContext::class)) {
-            return [];
-        }
-
         $scopeContext = ScopeContext::create($filePath);
         $rootScope = $reflectionState['scopeFactory']->create($scopeContext, null);
         $provider = $reflectionState['provider'];
 
-        $scopeRanges = [];
+        $payload = [];
         $reflectionState['nodeScopeResolver']->processNodes(
             $stmts,
             $rootScope,
-            static function (Node $node, Scope $currentScope) use (&$scopeRanges): void {
-                $targetNode = null;
-                if ($node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_) {
-                    $targetNode = $node;
-                } elseif (method_exists($node, 'getOriginalNode')) {
+            function (Node $node, Scope $currentScope) use (
+                &$payload,
+                $provider,
+                $rangeStart,
+                $rangeEnd,
+                $text,
+            ): void {
+                if (!$node instanceof FuncCall && !$node instanceof MethodCall && !$node instanceof StaticCall) {
+                    return;
+                }
+                $callStartOffset = (int) $node->getStartFilePos();
+                if ($callStartOffset < 0) {
+                    return;
+                }
+
+                $arguments = [];
+                foreach ($node->args as $arg) {
+                    if (!$arg instanceof Arg) {
+                        continue;
+                    }
+                    $argStart = (int) $arg->getStartFilePos();
+                    $argEnd = (int) $arg->getEndFilePos() + 1;
+                    $arguments[] = $this->trimSegment($text, $argStart, $argEnd);
+                }
+                if (count($arguments) === 0) {
+                    return;
+                }
+
+                $params = [];
+                if ($node instanceof FuncCall && $node->name instanceof Name) {
+                    $resolvedName = '';
                     try {
-                        $originalNode = $node->getOriginalNode();
-                        if ($originalNode instanceof Node\Stmt\ClassMethod || $originalNode instanceof Node\Stmt\Function_) {
-                            $targetNode = $originalNode;
-                        }
+                        $resolvedName = (string) $currentScope->resolveName($node->name);
                     } catch (Throwable) {
-                        $targetNode = null;
+                        $resolvedName = '';
+                    }
+                    $params = $this->getFunctionParameterNamesFromPhpstan(
+                        $provider,
+                        $resolvedName !== '' ? $resolvedName : $node->name->toString(),
+                        $resolvedName !== '' ? '' : $this->getNamespaceFromScope($currentScope),
+                    );
+                } elseif ($node instanceof StaticCall && $node->name instanceof Identifier) {
+                    $methodName = $node->name->toString();
+                    if ($node->class instanceof Name) {
+                        $classToken = strtolower($node->class->toString());
+                        if (in_array($classToken, ['self', 'static', 'parent'], true)) {
+                            $classReflection = null;
+                            try {
+                                $currentClassReflection = $currentScope->getClassReflection();
+                                if ($currentClassReflection instanceof ClassReflection) {
+                                    $classReflection = $currentClassReflection;
+                                }
+
+                                if ($classReflection !== null && $classToken === 'parent') {
+                                    $parentClassReflection = $classReflection->getParentClass();
+                                    $classReflection = $parentClassReflection instanceof ClassReflection
+                                        ? $parentClassReflection
+                                        : null;
+                                }
+
+                                if ($classReflection !== null) {
+                                    $params = $this->getMethodParameterNamesFromClassReflection(
+                                        $classReflection,
+                                        $currentScope,
+                                        $methodName
+                                    );
+                                }
+                            } catch (Throwable) {
+                                $params = [];
+                            }
+                        }
+
+                        if (count($params) === 0) {
+                            $resolvedClassName = '';
+                            try {
+                                $resolvedClassName = (string) $currentScope->resolveName($node->class);
+                            } catch (Throwable) {
+                                $resolvedClassName = '';
+                            }
+
+                            $context = [
+                                'namespace' => $this->getNamespaceFromScope($currentScope),
+                                'useClasses' => [],
+                            ];
+
+                            $params = $this->getStaticMethodParameterNamesFromPhpstan(
+                                $provider,
+                                $currentScope,
+                                $resolvedClassName !== '' ? ('\\' . ltrim($resolvedClassName, '\\')) : $node->class->toString(),
+                                $methodName,
+                                $context
+                            );
+                        }
+                    } elseif ($node->class instanceof Expr) {
+                        try {
+                            $classType = $currentScope->getType($node->class);
+                        } catch (Throwable) {
+                            $classType = null;
+                        }
+                        if ($classType !== null) {
+                            $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $classType, $methodName);
+                        }
+                    }
+                } elseif ($node instanceof MethodCall && $node->name instanceof Identifier) {
+                    $methodName = $node->name->toString();
+                    try {
+                        $receiverType = $currentScope->getType($node->var);
+                    } catch (Throwable) {
+                        $receiverType = null;
+                    }
+                    if ($receiverType !== null) {
+                        $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $receiverType, $methodName);
                     }
                 }
 
-                if (!$targetNode instanceof Node) {
+                if (count($params) === 0) {
                     return;
                 }
 
-                $start = (int) $targetNode->getStartFilePos();
-                $end = (int) $targetNode->getEndFilePos() + 1;
-                if ($start < 0 || $end <= $start) {
+                $hints = $this->buildArgumentHints($params, $arguments, $rangeStart, $rangeEnd);
+                if (count($hints) === 0) {
                     return;
                 }
 
-                $scopeRanges[] = [
-                    'start' => $start,
-                    'end' => $end,
-                    'scope' => $currentScope,
+                $payload[] = [
+                    'callStartOffset' => $callStartOffset,
+                    'hints' => $hints,
                 ];
             }
         );
-
-        if (!class_exists(NodeTraverser::class) || !class_exists(NodeVisitorAbstract::class)) {
-            return [];
-        }
-
-        $traverser = new NodeTraverser();
-        $callCollector = new class extends NodeVisitorAbstract {
-            /** @var list<FuncCall|MethodCall|StaticCall> */
-            public array $calls = [];
-
-            public function enterNode(Node $node)
-            {
-                if ($node instanceof FuncCall || $node instanceof MethodCall || $node instanceof StaticCall) {
-                    $this->calls[] = $node;
-                }
-
-                return null;
-            }
-        };
-        $traverser->addVisitor($callCollector);
-        $traverser->traverse($stmts);
-        $callNodes = $callCollector->calls;
-
-        $findScopeForOffset = static function (int $offset) use ($scopeRanges, $rootScope): Scope {
-            $selected = $rootScope;
-            $selectedLen = PHP_INT_MAX;
-
-            foreach ($scopeRanges as $range) {
-                if ($offset < $range['start'] || $offset >= $range['end']) {
-                    continue;
-                }
-                $len = $range['end'] - $range['start'];
-                if ($len < $selectedLen) {
-                    $selected = $range['scope'];
-                    $selectedLen = $len;
-                }
-            }
-
-            return $selected;
-        };
-
-        $payload = [];
-
-        foreach ($callNodes as $node) {
-            $callStartOffset = (int) $node->getStartFilePos();
-            if ($callStartOffset < 0) {
-                continue;
-            }
-            $currentScope = $findScopeForOffset($callStartOffset);
-
-            $arguments = [];
-            foreach ($node->args as $arg) {
-                if (!$arg instanceof Arg) {
-                    continue;
-                }
-                $argStart = (int) $arg->getStartFilePos();
-                $argEnd = (int) $arg->getEndFilePos() + 1;
-                $arguments[] = $this->trimSegment($text, $argStart, $argEnd);
-            }
-            if (count($arguments) === 0) {
-                continue;
-            }
-
-            $params = [];
-            if ($node instanceof FuncCall && $node->name instanceof Name) {
-                $resolvedName = '';
-                try {
-                    $resolvedName = (string) $currentScope->resolveName($node->name);
-                } catch (Throwable) {
-                    $resolvedName = '';
-                }
-                $params = $this->getFunctionParameterNamesFromPhpstan(
-                    $provider,
-                    $resolvedName !== '' ? $resolvedName : $node->name->toString(),
-                    $resolvedName !== '' ? '' : $this->getNamespaceFromScope($currentScope)
-                );
-            } elseif ($node instanceof StaticCall && $node->name instanceof Identifier) {
-                $methodName = $node->name->toString();
-                if ($node->class instanceof Name) {
-                    $classToken = strtolower($node->class->toString());
-                    if (
-                        ($classToken === 'self' || $classToken === 'static' || $classToken === 'parent')
-                        && method_exists($currentScope, 'getClassReflection')
-                    ) {
-                        try {
-                            $classReflection = $currentScope->getClassReflection();
-                            if (
-                                $classToken === 'parent'
-                                && $classReflection instanceof ClassReflection
-                                && method_exists($classReflection, 'getParentClass')
-                            ) {
-                                $classReflection = $classReflection->getParentClass();
-                            }
-                            if ($classReflection instanceof ClassReflection) {
-                                $params = $this->getMethodParameterNamesFromClassReflection(
-                                    $classReflection,
-                                    $currentScope,
-                                    $methodName
-                                );
-                            }
-                        } catch (Throwable) {
-                            $params = [];
-                        }
-                    }
-
-                    if (count($params) === 0) {
-                        $resolvedClassName = '';
-                        try {
-                            $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                        } catch (Throwable) {
-                            $resolvedClassName = '';
-                        }
-
-                        $context = [
-                            'namespace' => $this->getNamespaceFromScope($currentScope),
-                            'useClasses' => [],
-                        ];
-
-                        $params = $this->getStaticMethodParameterNamesFromPhpstan(
-                            $provider,
-                            $currentScope,
-                            $resolvedClassName !== '' ? ('\\' . ltrim($resolvedClassName, '\\')) : $node->class->toString(),
-                            $methodName,
-                            $context
-                        );
-                    }
-                } elseif ($node->class instanceof Expr) {
-                    try {
-                        $classType = $currentScope->getType($node->class);
-                    } catch (Throwable) {
-                        $classType = null;
-                    }
-                    if ($classType instanceof Type) {
-                        $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $classType, $methodName);
-                    }
-                }
-            } elseif ($node instanceof MethodCall && $node->name instanceof Identifier) {
-                $methodName = $node->name->toString();
-                try {
-                    $receiverType = $currentScope->getType($node->var);
-                } catch (Throwable) {
-                    $receiverType = null;
-                }
-                if ($receiverType instanceof Type) {
-                    $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $receiverType, $methodName);
-                }
-            }
-
-            if (count($params) === 0) {
-                continue;
-            }
-
-            $hints = $this->buildArgumentHints($params, $arguments, $rangeStart, $rangeEnd);
-            if (count($hints) === 0) {
-                continue;
-            }
-
-            $payload[] = [
-                'callStartOffset' => $callStartOffset,
-                'hints' => $hints,
-            ];
-        }
 
         return $payload;
     }
@@ -856,19 +755,17 @@ final class PhpstanReflectionWorker
         if ($reflectionState === null) {
             return [];
         }
-        $fromScope = $this->collectCallArgumentPayloadFromScope(
+        return $this->collectCallArgumentPayloadFromScope(
             $filePath,
             $text,
             $rangeStart,
             $rangeEnd,
             $reflectionState
         );
-
-        return is_array($fromScope) ? $fromScope : [];
     }
 
     /**
-     * @param array{namespace:string,useClasses:array<string,string>} $context
+     * @param array{namespace: string, useClasses: array<string, string>} $context
      */
     private function resolveClassName(string $rawName, array $context): string
     {
@@ -894,7 +791,7 @@ final class PhpstanReflectionWorker
     }
 
     /**
-     * @param array<string,array<array-key,array|bool|float|int|string|null>|array|bool|float|int|string|null> $params
+     * @param array<mixed> $params
      * @return worker_response
      */
     private function handleResolveNodeContext(string $id, array $params): array
@@ -907,10 +804,10 @@ final class PhpstanReflectionWorker
         $cursorOffset = isset($params['cursorOffset']) && is_int($params['cursorOffset']) ? $params['cursorOffset'] : 0;
         $rangeStart = isset($params['rangeStartOffset']) && is_int($params['rangeStartOffset'])
             ? $params['rangeStartOffset']
-            : 0;
+        : 0;
         $rangeEnd = isset($params['rangeEndOffset']) && is_int($params['rangeEndOffset'])
             ? $params['rangeEndOffset']
-            : max(0, strlen($text));
+        : max(0, strlen($text));
 
         $result = [];
         if (in_array('callArguments', $capabilities, true) && $filePath !== '' && $text !== '') {
@@ -932,10 +829,9 @@ final class PhpstanReflectionWorker
     }
 
     /**
-     * @param array<array-key,array|bool|float|int|string|null>|bool|float|int|string|null $payload
      * @return worker_response
      */
-    private function handleRequest(array|bool|float|int|string|null $payload): array
+    private function handleRequest(mixed $payload): array
     {
         if (!is_array($payload)) {
             return $this->createErrorResponse('', 'invalid_request', 'Payload must be an object.');
