@@ -7,6 +7,9 @@ Collect symbol/type metadata from PHPStan Reflection with low overhead and reuse
 - `textDocument/hover`
 - `textDocument/inlayHint` (parameter name hints)
 
+For the rearchitecture plan that isolates PHPStan internals behind adapters,
+see `docs/phpstan-integration-rearchitecture.md`.
+
 ## Why a Bridge Process
 
 Running `phpstan analyze` for every interactive feature is too expensive.
@@ -67,4 +70,3 @@ Then Node can derive inlay hints with the same suppression rules.
 - restart worker on crash
 - bounded in-memory cache (LRU)
 - never block diagnostics queue; interactive features should degrade gracefully
-
