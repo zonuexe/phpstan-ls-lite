@@ -303,7 +303,7 @@ final class PhpstanReflectionWorker
                 $reference = \Composer\InstalledVersions::getReference($packageName);
                 $version = ($prettyVersion ?? 'unknown')
                     . '@'
-                    . substr((string) ($reference ?? 'unknown'), 0, 7);
+                    . substr($reference ?? 'unknown', 0, 7);
                 $this->phpstanVersionFingerprint = $version;
                 return $version;
             }
@@ -532,7 +532,7 @@ final class PhpstanReflectionWorker
             }
 
             $hide = false;
-            $argText = trim((string) $arg['text']);
+            $argText = trim($arg['text']);
             if ($argText === '') {
                 $hide = true;
             }
@@ -545,7 +545,7 @@ final class PhpstanReflectionWorker
                 }
             }
 
-            $start = (int) $arg['start'];
+            $start = $arg['start'];
             if ($start < $rangeStart || $start > $rangeEnd) {
                 continue;
             }
@@ -1129,12 +1129,8 @@ final class PhpstanReflectionWorker
                     return;
                 }
 
-                try {
-                    $type = $currentScope->getType($node);
-                    $typeString = $type->describe(VerbosityLevel::precise());
-                } catch (Throwable) {
-                    return;
-                }
+                $type = $currentScope->getType($node);
+                $typeString = $type->describe(VerbosityLevel::precise());
                 if ($typeString === '') {
                     return;
                 }
@@ -1277,12 +1273,7 @@ final class PhpstanReflectionWorker
                 $definition = null;
                 if ($node instanceof Name) {
                     $namespace = $this->getNamespaceFromScope($currentScope);
-                    $resolvedClassName = '';
-                    try {
-                        $resolvedClassName = (string) $currentScope->resolveName($node);
-                    } catch (Throwable) {
-                        $resolvedClassName = '';
-                    }
+                    $resolvedClassName = $currentScope->resolveName($node);
                     $className = $resolvedClassName !== ''
                         ? ltrim($resolvedClassName, '\\')
                         : ltrim($node->toString(), '\\');
@@ -1294,13 +1285,8 @@ final class PhpstanReflectionWorker
                         $definition = $this->findLocalClassDefinition($localDefinitions, $className, $namespace);
                     }
                 } elseif ($node instanceof FuncCall && $node->name instanceof Name) {
-                    $resolvedName = '';
+                    $resolvedName = $currentScope->resolveName($node->name);
                     $namespace = $this->getNamespaceFromScope($currentScope);
-                    try {
-                        $resolvedName = (string) $currentScope->resolveName($node->name);
-                    } catch (Throwable) {
-                        $resolvedName = '';
-                    }
                     $functionReflection = $this->getFunctionReflectionFromPhpstan(
                         $provider,
                         $resolvedName !== '' ? $resolvedName : $node->name->toString(),
@@ -1325,12 +1311,7 @@ final class PhpstanReflectionWorker
                             && $classEnd > $classStart
                             && $this->hasMatchedOffset($candidateOffsets, $classStart, $classEnd)
                         ) {
-                            $resolvedClassName = '';
-                            try {
-                                $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                            } catch (Throwable) {
-                                $resolvedClassName = '';
-                            }
+                            $resolvedClassName = $currentScope->resolveName($node->class);
                             $className = $resolvedClassName !== ''
                                 ? ltrim($resolvedClassName, '\\')
                                 : $node->class->toString();
@@ -1386,12 +1367,7 @@ final class PhpstanReflectionWorker
                             }
 
                             if ($methodReflection === null) {
-                                $resolvedClassName = '';
-                                try {
-                                    $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                                } catch (Throwable) {
-                                    $resolvedClassName = '';
-                                }
+                                $resolvedClassName = $currentScope->resolveName($node->class);
                                 $className = $resolvedClassName !== ''
                                     ? ltrim($resolvedClassName, '\\')
                                     : $node->class->toString();
@@ -1406,20 +1382,14 @@ final class PhpstanReflectionWorker
                                 }
                             }
                         } elseif ($node->class instanceof Expr) {
-                            try {
-                                $classType = $currentScope->getType($node->class);
-                            } catch (Throwable) {
-                                $classType = null;
-                            }
-                            if ($classType instanceof Type) {
-                                $classNames = $this->getClassNamesFromType($classType);
-                                $methodReflection = $this->getMethodReflectionFromType(
-                                    $provider,
-                                    $currentScope,
-                                    $classType,
-                                    $methodName
-                                );
-                            }
+                            $classType = $currentScope->getType($node->class);
+                            $classNames = $this->getClassNamesFromType($classType);
+                            $methodReflection = $this->getMethodReflectionFromType(
+                                $provider,
+                                $currentScope,
+                                $classType,
+                                $methodName
+                            );
                         }
 
                         if ($methodReflection !== null) {
@@ -1430,12 +1400,7 @@ final class PhpstanReflectionWorker
                         }
                     }
                 } elseif ($node instanceof New_ && $node->class instanceof Name) {
-                    $resolvedClassName = '';
-                    try {
-                        $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                    } catch (Throwable) {
-                        $resolvedClassName = '';
-                    }
+                    $resolvedClassName = $currentScope->resolveName($node->class);
                     $className = $resolvedClassName !== ''
                         ? ltrim($resolvedClassName, '\\')
                         : $node->class->toString();
@@ -1450,12 +1415,7 @@ final class PhpstanReflectionWorker
                         );
                     }
                 } elseif ($node instanceof ClassConstFetch && $node->class instanceof Name) {
-                    $resolvedClassName = '';
-                    try {
-                        $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                    } catch (Throwable) {
-                        $resolvedClassName = '';
-                    }
+                    $resolvedClassName = $currentScope->resolveName($node->class);
                     $className = $resolvedClassName !== ''
                         ? ltrim($resolvedClassName, '\\')
                         : $node->class->toString();
@@ -1481,12 +1441,7 @@ final class PhpstanReflectionWorker
                         && $classEnd > $classStart
                         && $this->hasMatchedOffset($candidateOffsets, $classStart, $classEnd)
                     ) {
-                        $resolvedClassName = '';
-                        try {
-                            $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                        } catch (Throwable) {
-                            $resolvedClassName = '';
-                        }
+                        $resolvedClassName = $currentScope->resolveName($node->class);
                         $className = $resolvedClassName !== ''
                             ? ltrim($resolvedClassName, '\\')
                             : $node->class->toString();
@@ -1518,12 +1473,7 @@ final class PhpstanReflectionWorker
                                 }
                             }
                         } else {
-                            $resolvedClassName = '';
-                            try {
-                                $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                            } catch (Throwable) {
-                                $resolvedClassName = '';
-                            }
+                            $resolvedClassName = $currentScope->resolveName($node->class);
                             $className = $resolvedClassName !== ''
                                 ? ltrim($resolvedClassName, '\\')
                                 : $node->class->toString();
@@ -1537,22 +1487,16 @@ final class PhpstanReflectionWorker
                 } elseif ($node instanceof MethodCall && $node->name instanceof Identifier) {
                     $methodName = $node->name->toString();
                     $classNames = [];
-                    try {
-                        $receiverType = $currentScope->getType($node->var);
-                    } catch (Throwable) {
-                        $receiverType = null;
-                    }
-                    if ($receiverType instanceof Type) {
-                        $classNames = $this->getClassNamesFromType($receiverType);
-                        $methodReflection = $this->getMethodReflectionFromType(
-                            $provider,
-                            $currentScope,
-                            $receiverType,
-                            $methodName,
-                        );
-                        if ($methodReflection !== null) {
-                            $definition = $this->getDefinitionLocationFromMethodReflection($methodReflection);
-                        }
+                    $receiverType = $currentScope->getType($node->var);
+                    $classNames = $this->getClassNamesFromType($receiverType);
+                    $methodReflection = $this->getMethodReflectionFromType(
+                        $provider,
+                        $currentScope,
+                        $receiverType,
+                        $methodName,
+                    );
+                    if ($methodReflection !== null) {
+                        $definition = $this->getDefinitionLocationFromMethodReflection($methodReflection);
                     }
                     if ($node->var instanceof Variable && $node->var->name === 'this') {
                         try {
@@ -1667,12 +1611,7 @@ final class PhpstanReflectionWorker
 
                 $params = [];
                 if ($node instanceof FuncCall && $node->name instanceof Name) {
-                    $resolvedName = '';
-                    try {
-                        $resolvedName = (string) $currentScope->resolveName($node->name);
-                    } catch (Throwable) {
-                        $resolvedName = '';
-                    }
+                    $resolvedName = $currentScope->resolveName($node->name);
                     $params = $this->getFunctionParameterNamesFromPhpstan(
                         $provider,
                         $resolvedName !== '' ? $resolvedName : $node->name->toString(),
@@ -1710,12 +1649,7 @@ final class PhpstanReflectionWorker
                         }
 
                         if (count($params) === 0) {
-                            $resolvedClassName = '';
-                            try {
-                                $resolvedClassName = (string) $currentScope->resolveName($node->class);
-                            } catch (Throwable) {
-                                $resolvedClassName = '';
-                            }
+                            $resolvedClassName = $currentScope->resolveName($node->class);
 
                             $context = [
                                 'namespace' => $this->getNamespaceFromScope($currentScope),
@@ -1731,25 +1665,13 @@ final class PhpstanReflectionWorker
                             );
                         }
                     } elseif ($node->class instanceof Expr) {
-                        try {
-                            $classType = $currentScope->getType($node->class);
-                        } catch (Throwable) {
-                            $classType = null;
-                        }
-                        if ($classType !== null) {
-                            $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $classType, $methodName);
-                        }
+                        $classType = $currentScope->getType($node->class);
+                        $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $classType, $methodName);
                     }
                 } elseif ($node instanceof MethodCall && $node->name instanceof Identifier) {
                     $methodName = $node->name->toString();
-                    try {
-                        $receiverType = $currentScope->getType($node->var);
-                    } catch (Throwable) {
-                        $receiverType = null;
-                    }
-                    if ($receiverType !== null) {
-                        $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $receiverType, $methodName);
-                    }
+                    $receiverType = $currentScope->getType($node->var);
+                    $params = $this->getMethodParameterNamesFromType($provider, $currentScope, $receiverType, $methodName);
                 }
 
                 if (count($params) === 0) {
