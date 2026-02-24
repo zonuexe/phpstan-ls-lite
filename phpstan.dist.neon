@@ -5,5 +5,11 @@ parameters:
 		- php/
 	bootstrapFiles:
 		- vendor-bin/ecs/vendor/symplify/easy-coding-standard/vendor/autoload.php
+	ignoreErrors:
+		- identifier: phpstanApi.class
+		- identifier: phpstanApi.classConstant
+		- identifier: phpstanApi.interface
+		- identifier: phpstanApi.method
+		- identifier: method.internal
 includes:
 	- vendor-bin/phpstan/vendor/phpstan/phpstan/conf/bleedingEdge.neon

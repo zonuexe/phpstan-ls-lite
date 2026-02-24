@@ -19,10 +19,13 @@ use PhpParser\Node\Stmt\Function_;
 use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\Node\VarLikeIdentifier;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\ResultCache\ResultCacheManager;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeContext;
 use PHPStan\Analyser\ScopeFactory;
+use PHPStan\Cache\Cache;
 use PHPStan\DependencyInjection\ContainerFactory;
+use PHPStan\Internal\ComposerHelper;
 use PHPStan\Parser\Parser;
 use PHPStan\Reflection\ClassReflection;
 use PHPStan\Reflection\FunctionReflection;
@@ -34,17 +37,19 @@ use PHPStan\Type\VerbosityLevel;
 
 /**
  * @phpstan-type reflection_state array{
- *   provider:ReflectionProvider,
- *   parser:Parser,
- *   nodeScopeResolver:NodeScopeResolver,
- *   scopeFactory:ScopeFactory
+ *   provider: ReflectionProvider,
+ *   parser: Parser,
+ *   nodeScopeResolver: NodeScopeResolver,
+ *   scopeFactory: ScopeFactory,
+ *   cache: ?Cache,
  * }
  * @phpstan-type reflection_state_with_root array{
- *   root:string,
- *   provider:ReflectionProvider,
- *   parser:Parser,
- *   nodeScopeResolver:NodeScopeResolver,
- *   scopeFactory:ScopeFactory
+ *   root: string,
+ *   provider: ReflectionProvider,
+ *   parser: Parser,
+ *   nodeScopeResolver: NodeScopeResolver,
+ *   scopeFactory: ScopeFactory,
+ *   cache: ?Cache,
  * }
  * @phpstan-type request_error array{code:string,message:string}
  * @phpstan-type argument_hint array{
@@ -73,6 +78,7 @@ use PHPStan\Type\VerbosityLevel;
  *   classes: array<string, definition_location>,
  *   properties: array<string, array<string, definition_location>>,
  * }
+ * @phpstan-type cache_feature 'definitions'|'local-definition-index'|'call-arguments'
  * @phpstan-type worker_response array{
  *   protocolVersion:int,
  *   id:string,
@@ -90,6 +96,14 @@ final class PhpstanReflectionWorker
 
     /** @var array<string, reflection_state> */
     private array $reflectionStateByRoot = [];
+
+    /** @var array<string, string> */
+    private array $configFingerprintByRoot = [];
+
+    private string $phpstanVersionFingerprint;
+
+    /** @var array<string, mixed> */
+    private array $memoryCache = [];
 
     public function run(): int
     {
@@ -177,6 +191,7 @@ final class PhpstanReflectionWorker
                 'parser' => $state['parser'],
                 'nodeScopeResolver' => $state['nodeScopeResolver'],
                 'scopeFactory' => $state['scopeFactory'],
+                'cache' => $state['cache'],
             ];
         }
 
@@ -238,12 +253,19 @@ final class PhpstanReflectionWorker
                 }
                 $nodeScopeResolver = $container->getByType(NodeScopeResolver::class);
                 $scopeFactory = $container->getByType(ScopeFactory::class);
+                $cache = null;
+                try {
+                    $cache = $container->getByType(Cache::class);
+                } catch (Throwable) {
+                    $cache = null;
+                }
 
                 $reflectionState = [
                     'provider' => $provider,
                     'parser' => $parser,
                     'nodeScopeResolver' => $nodeScopeResolver,
                     'scopeFactory' => $scopeFactory,
+                    'cache' => $cache,
                 ];
                 $this->reflectionStateByRoot[$root] = $reflectionState;
 
@@ -253,12 +275,193 @@ final class PhpstanReflectionWorker
                     'parser' => $reflectionState['parser'],
                     'nodeScopeResolver' => $reflectionState['nodeScopeResolver'],
                     'scopeFactory' => $reflectionState['scopeFactory'],
+                    'cache' => $reflectionState['cache'],
                 ];
             } catch (Throwable) {
                 continue;
             }
         }
         return null;
+    }
+
+    private function getPhpstanVersionFingerprint(): string
+    {
+        if (isset($this->phpstanVersionFingerprint)) {
+            return $this->phpstanVersionFingerprint;
+        }
+        if (class_exists(ComposerHelper::class)) {
+            $composerVersion = ComposerHelper::getPhpStanVersion();
+            if ($composerVersion !== ComposerHelper::UNKNOWN_VERSION && $composerVersion !== '') {
+                $this->phpstanVersionFingerprint = $composerVersion;
+                return $composerVersion;
+            }
+        }
+        if (class_exists(\Composer\InstalledVersions::class)) {
+            $packageName = 'phpstan/phpstan';
+            if (\Composer\InstalledVersions::isInstalled($packageName)) {
+                $prettyVersion = \Composer\InstalledVersions::getPrettyVersion($packageName);
+                $reference = \Composer\InstalledVersions::getReference($packageName);
+                $version = ($prettyVersion ?? 'unknown')
+                    . '@'
+                    . substr((string) ($reference ?? 'unknown'), 0, 7);
+                $this->phpstanVersionFingerprint = $version;
+                return $version;
+            }
+        }
+
+        if (class_exists(ResultCacheManager::class)) {
+            $resultCacheManagerClass = new ReflectionClass(ResultCacheManager::class);
+            $resultCacheManagerPath = $resultCacheManagerClass->getFileName();
+            if ($resultCacheManagerPath !== false && is_file($resultCacheManagerPath)) {
+                $hash = hash_file('sha256', $resultCacheManagerPath);
+                $version = 'result-cache-manager:' . ($hash === false ? 'unknown' : $hash);
+                $this->phpstanVersionFingerprint = $version;
+                return $version;
+            }
+        }
+
+        $containerFactoryClass = new ReflectionClass(ContainerFactory::class);
+        $containerFactoryPath = $containerFactoryClass->getFileName();
+        if ($containerFactoryPath !== false && is_file($containerFactoryPath)) {
+            $hash = hash_file('sha256', $containerFactoryPath);
+            $version = 'container-factory:' . ($hash === false ? 'unknown' : $hash);
+            $this->phpstanVersionFingerprint = $version;
+            return $version;
+        }
+
+        return $this->phpstanVersionFingerprint = 'unknown';
+    }
+
+    private function getConfigFingerprint(string $root): string
+    {
+        if (isset($this->configFingerprintByRoot[$root])) {
+            return $this->configFingerprintByRoot[$root];
+        }
+
+        $fingerprintParts = [];
+        foreach (['phpstan.neon', 'phpstan.neon.dist', 'composer.lock', 'composer.json'] as $relativePath) {
+            $path = $root . '/' . $relativePath;
+            $hash = is_file($path) ? (hash_file('sha256', $path) ?: '-') : '-';
+            $fingerprintParts[] = $relativePath . ':' . $hash;
+        }
+        $fingerprint = sha1(implode('|', $fingerprintParts));
+        $this->configFingerprintByRoot[$root] = $fingerprint;
+
+        return $fingerprint;
+    }
+
+    /**
+     * @param reflection_state_with_root $reflectionState
+     * @param array<string, int|string> $extra
+     * @return array{key:non-falsy-string, variableKey:non-falsy-string, memoryKey:non-falsy-string}
+     */
+    private function buildCacheKeys(
+        array $reflectionState,
+        string $feature,
+        string $filePath,
+        string $text,
+        array $extra = [],
+    ): array {
+        $key = 'phpstan-ls-lite:' . $feature . ':' . sha1($reflectionState['root'] . '|' . $filePath);
+        $extraJson = json_encode($extra, JSON_UNESCAPED_SLASHES);
+        $extraHash = sha1($extraJson === false ? '' : $extraJson);
+        $variableKey = sha1(
+            sha1($text)
+            . '|'
+            . $this->getConfigFingerprint($reflectionState['root'])
+            . '|'
+            . $this->getPhpstanVersionFingerprint()
+            . '|'
+            . $extraHash
+        );
+
+        return [
+            'key' => $key,
+            'variableKey' => $variableKey,
+            'memoryKey' => $key . '|' . $variableKey,
+        ];
+    }
+
+    /**
+     * @template TFeature of cache_feature
+     * @param reflection_state_with_root $reflectionState
+     * @param TFeature $feature
+     * @param array<string, int|string> $extra
+     * @return (
+     *   TFeature is 'definitions'
+     *     ? list<definition_location>|null
+     *     : (
+     *       TFeature is 'local-definition-index'
+     *         ? local_definition_index|null
+     *         : list<call_argument_payload>|null
+     *     )
+     * )
+     */
+    private function loadCacheValue(
+        array $reflectionState,
+        string $feature,
+        string $filePath,
+        string $text,
+        array $extra = [],
+    ) {
+        $keys = $this->buildCacheKeys($reflectionState, $feature, $filePath, $text, $extra);
+        if (array_key_exists($keys['memoryKey'], $this->memoryCache)) {
+            // @phpstan-ignore return.type
+            return $this->memoryCache[$keys['memoryKey']];
+        }
+
+        $cache = $reflectionState['cache'];
+        if (!$cache instanceof Cache) {
+            return null;
+        }
+        try {
+            $loaded = $cache->load($keys['key'], $keys['variableKey']);
+        } catch (Throwable) {
+            return null;
+        }
+        if ($loaded === null) {
+            return null;
+        }
+        $this->memoryCache[$keys['memoryKey']] = $loaded;
+
+        // @phpstan-ignore return.type
+        return $loaded;
+    }
+
+    /**
+     * @template TFeature of cache_feature
+     * @param reflection_state_with_root $reflectionState
+     * @param TFeature $feature
+     * @param array<string, int|string> $extra
+     * @param (
+     *   TFeature is 'definitions'
+     *     ? list<definition_location>
+     *     : (
+     *       TFeature is 'local-definition-index'
+     *         ? local_definition_index
+     *         : list<call_argument_payload>
+     *     )
+     * ) $value
+     */
+    private function saveCacheValue(
+        array $reflectionState,
+        string $feature,
+        string $filePath,
+        string $text,
+        $value,
+        array $extra = [],
+    ): void {
+        $keys = $this->buildCacheKeys($reflectionState, $feature, $filePath, $text, $extra);
+        $this->memoryCache[$keys['memoryKey']] = $value;
+        $cache = $reflectionState['cache'];
+        if (!$cache instanceof Cache) {
+            return;
+        }
+        try {
+            $cache->save($keys['key'], $keys['variableKey'], $value);
+        } catch (Throwable) {
+            // Ignore cache backend failures and continue without cache.
+        }
     }
 
     /**
@@ -987,8 +1190,19 @@ final class PhpstanReflectionWorker
         string $filePath,
         string $text,
         int $cursorOffset,
-        array $reflectionState
+        array $reflectionState,
     ): array {
+        $cachedDefinitions = $this->loadCacheValue(
+            $reflectionState,
+            'definitions',
+            $filePath,
+            $text,
+            ['cursorOffset' => $cursorOffset]
+        );
+        if ($cachedDefinitions !== null) {
+            return $cachedDefinitions;
+        }
+
         try {
             $stmts = $reflectionState['parser']->parseString($text);
         } catch (Throwable) {
@@ -997,7 +1211,24 @@ final class PhpstanReflectionWorker
         $scopeContext = ScopeContext::create($filePath);
         $rootScope = $reflectionState['scopeFactory']->create($scopeContext, null);
         $provider = $reflectionState['provider'];
-        $localDefinitions = $this->buildLocalDefinitionIndex($stmts, $filePath);
+        $cachedLocalDefinitions = $this->loadCacheValue(
+            $reflectionState,
+            'local-definition-index',
+            $filePath,
+            $text
+        );
+        if ($cachedLocalDefinitions !== null) {
+            $localDefinitions = $cachedLocalDefinitions;
+        } else {
+            $localDefinitions = $this->buildLocalDefinitionIndex($stmts, $filePath);
+            $this->saveCacheValue(
+                $reflectionState,
+                'local-definition-index',
+                $filePath,
+                $text,
+                $localDefinitions
+            );
+        }
         $candidateOffsets = [$cursorOffset];
         if ($cursorOffset > 0) {
             $candidateOffsets[] = $cursorOffset - 1;
@@ -1347,7 +1578,16 @@ final class PhpstanReflectionWorker
             }
         );
 
-        return $bestDefinition === null ? [] : [$bestDefinition];
+        $definitions = $bestDefinition === null ? [] : [$bestDefinition];
+        $this->saveCacheValue(
+            $reflectionState,
+            'definitions',
+            $filePath,
+            $text,
+            $definitions,
+            ['cursorOffset' => $cursorOffset]
+        );
+        return $definitions;
     }
 
     /**
@@ -1373,6 +1613,17 @@ final class PhpstanReflectionWorker
         int $rangeEnd,
         array $reflectionState,
     ): array {
+        $cachedPayload = $this->loadCacheValue(
+            $reflectionState,
+            'call-arguments',
+            $filePath,
+            $text,
+            ['rangeStart' => $rangeStart, 'rangeEnd' => $rangeEnd]
+        );
+        if ($cachedPayload !== null) {
+            return $cachedPayload;
+        }
+
         try {
             $stmts = $reflectionState['parser']->parseString($text);
         } catch (Throwable) {
@@ -1517,6 +1768,14 @@ final class PhpstanReflectionWorker
             }
         );
 
+        $this->saveCacheValue(
+            $reflectionState,
+            'call-arguments',
+            $filePath,
+            $text,
+            $payload,
+            ['rangeStart' => $rangeStart, 'rangeEnd' => $rangeEnd]
+        );
         return $payload;
     }
 
