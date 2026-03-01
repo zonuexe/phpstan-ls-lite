@@ -58,6 +58,14 @@ npx --yes @zonuexe/phpstan-ls-lite
 
 The server communicates via stdio.
 
+To inspect runtime information from the current directory:
+
+```bash
+npx --yes @zonuexe/phpstan-ls-lite info
+```
+
+This prints detected `PHP` and `PHPStan` runtime details (version, runtime path, and detection source).
+
 ## Example Client Configuration
 
 ### Neovim (`lspconfig`)

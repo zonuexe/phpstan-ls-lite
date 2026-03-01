@@ -14,11 +14,17 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { resolvePhpstanRuntime } from './runtime/phpstanCommand.js';
 import { createPhpProcessReflectionClient } from './reflection/phpstanReflectionClient.js';
+import { runInfoCommand } from './cli/info.js';
 import {
   createPhpstanDiagnosticsService,
   type PhpstanDiagnosticsSettings,
   type PhpstanDiagnosticsSettingsUpdate,
 } from './diagnostics/phpstanDiagnostics.js';
+
+if (process.argv[2] === 'info') {
+  const exitCode = await runInfoCommand();
+  process.exit(exitCode);
+}
 
 const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
