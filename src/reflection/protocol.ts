@@ -1,6 +1,6 @@
 export const REFLECTION_PROTOCOL_VERSION = 1;
 
-export type ReflectionCapability = 'hover' | 'callArguments' | 'definition';
+export type ReflectionCapability = 'hover' | 'callArguments' | 'definition' | 'rename';
 
 export type ReflectionRequest =
   | {
@@ -17,6 +17,7 @@ export type ReflectionRequest =
         cursorOffset: number;
         rangeStartOffset?: number;
         rangeEndOffset?: number;
+        newName?: string;
         text?: string;
         capabilities: ReflectionCapability[];
       };
@@ -38,10 +39,17 @@ export type ReflectionCallArgumentPayload = {
   hints: ReflectionCallArgumentHint[];
 };
 
+export type ReflectionRenameEdit = {
+  startOffset: number;
+  endOffset: number;
+  replacement: string;
+};
+
 export type ReflectionSuccessResult = {
   hover?: ReflectionHoverPayload;
   callArguments?: ReflectionCallArgumentPayload[];
   definitions?: ReflectionDefinitionLocation[];
+  renameEdits?: ReflectionRenameEdit[];
 };
 
 export type ReflectionDefinitionLocation = {

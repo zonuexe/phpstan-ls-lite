@@ -19,6 +19,7 @@ export type ReflectionClient = {
     capabilities: ReflectionCapability[];
     rangeStartOffset?: number;
     rangeEndOffset?: number;
+    newName?: string;
   }): Promise<ReflectionSuccessResult | null>;
   dispose(): void;
 };
@@ -50,6 +51,7 @@ export function buildResolveNodeContextRequest(params: {
   capabilities: ReflectionCapability[];
   rangeStartOffset?: number;
   rangeEndOffset?: number;
+  newName?: string;
 }): ReflectionRequest {
   return {
     protocolVersion: REFLECTION_PROTOCOL_VERSION,

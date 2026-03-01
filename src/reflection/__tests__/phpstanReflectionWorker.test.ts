@@ -393,4 +393,56 @@ class User {
       assert.equal(definitions[0]?.filePath, phpFile);
     }
   });
+
+  it('returns rename edits for local variable in current scope', () => {
+    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
+    if (phpProbe.status !== 0) {
+      return;
+    }
+
+    fs.mkdirSync(tmpRoot, { recursive: true });
+    const phpFile = path.join(tmpRoot, 'rename-local-variable.php');
+    const code = `<?php
+function test(int $a): void {
+  $x = $a + 1;
+  $y = $x + $x;
+  $fn = function () use ($x): int {
+    return $x;
+  };
+}
+`;
+    fs.writeFileSync(phpFile, code, 'utf8');
+    const cursorOffset = Buffer.byteLength(code.slice(0, code.indexOf('$x =') + 1), 'utf8');
+
+    const request = {
+      protocolVersion: 1,
+      id: 'test-rename-1',
+      method: 'resolveNodeContext',
+      params: {
+        filePath: phpFile,
+        cursorOffset,
+        text: code,
+        newName: 'value',
+        capabilities: ['rename'],
+      },
+    };
+
+    const proc = spawnSync('php', [workerPath], {
+      input: `${JSON.stringify(request)}\n`,
+      encoding: 'utf8',
+    });
+    assert.equal(proc.status, 0, proc.stderr);
+    const line = proc.stdout.trim().split(/\r?\n/).at(-1) ?? '';
+    assert.notEqual(line, '');
+    const response = JSON.parse(line) as {
+      ok: boolean;
+      result?: {
+        renameEdits?: Array<{ startOffset: number; endOffset: number; replacement: string }>;
+      };
+    };
+    assert.equal(response.ok, true);
+    const edits = response.result?.renameEdits ?? [];
+    assert.equal(edits.length, 3);
+    assert.ok(edits.every((edit) => edit.replacement === 'value'));
+  });
 });

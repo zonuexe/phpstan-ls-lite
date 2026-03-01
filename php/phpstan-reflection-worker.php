@@ -12,12 +12,15 @@ use PhpParser\Node\Expr\New_;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Expr\StaticPropertyFetch;
 use PhpParser\Node\Expr\Variable;
+use PhpParser\Node\FunctionLike;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
 use PhpParser\Node\Stmt\ClassLike;
 use PhpParser\Node\Stmt\Function_;
 use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\Node\VarLikeIdentifier;
+use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitorAbstract;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\ResultCache\ResultCacheManager;
 use PHPStan\Analyser\Scope;
@@ -67,10 +70,16 @@ use PHPStan\Type\VerbosityLevel;
  *   line: int,
  *   character:int,
  * }
+ * @phpstan-type rename_edit array{
+ *   startOffset: int,
+ *   endOffset: int,
+ *   replacement: string,
+ * }
  * @phpstan-type worker_result array{
  *   hover?: array{markdown: string},
  *   callArguments?: list<call_argument_payload>,
  *   definitions?: list<definition_location>,
+ *   renameEdits?: list<rename_edit>,
  * }
  * @phpstan-type local_definition_index array{
  *   functions: array<string, definition_location>,
@@ -78,7 +87,7 @@ use PHPStan\Type\VerbosityLevel;
  *   classes: array<string, definition_location>,
  *   properties: array<string, array<string, definition_location>>,
  * }
- * @phpstan-type cache_feature 'definitions'|'local-definition-index'|'call-arguments'
+ * @phpstan-type cache_feature 'definitions'|'local-definition-index'|'call-arguments'|'rename-edits'
  * @phpstan-type worker_response array{
  *   protocolVersion:int,
  *   id:string,
@@ -393,7 +402,11 @@ final class PhpstanReflectionWorker
      *     : (
      *       TFeature is 'local-definition-index'
      *         ? local_definition_index|null
-     *         : list<call_argument_payload>|null
+     *         : (
+     *           TFeature is 'call-arguments'
+     *             ? list<call_argument_payload>|null
+     *             : list<rename_edit>|null
+     *         )
      *     )
      * )
      */
@@ -439,7 +452,11 @@ final class PhpstanReflectionWorker
      *     : (
      *       TFeature is 'local-definition-index'
      *         ? local_definition_index
-     *         : list<call_argument_payload>
+     *         : (
+     *           TFeature is 'call-arguments'
+     *             ? list<call_argument_payload>
+     *             : list<rename_edit>
+     *         )
      *     )
      * ) $value
      */
@@ -1719,6 +1736,174 @@ final class PhpstanReflectionWorker
         );
     }
 
+    private function isValidPhpVariableName(string $name): bool
+    {
+        return preg_match('/^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*$/', $name) === 1;
+    }
+
+    /**
+     * @return list<rename_edit>
+     */
+    private function collectRenameEdits(string $filePath, string $text, int $cursorOffset, string $newName): array
+    {
+        if ($newName === '' || !$this->isValidPhpVariableName($newName)) {
+            return [];
+        }
+
+        $reflectionState = $this->getPhpstanReflectionState($filePath);
+        if ($reflectionState === null) {
+            return [];
+        }
+
+        try {
+            $stmts = $reflectionState['parser']->parseString($text);
+        } catch (Throwable) {
+            return [];
+        }
+
+        $targetFinder = new class($cursorOffset) extends NodeVisitorAbstract {
+            public int $cursorOffset;
+
+            /** @var list<FunctionLike> */
+            public array $functionStack = [];
+
+            public ?FunctionLike $targetScope = null;
+
+            public string $targetVariableName = '';
+
+            public int $bestLength = PHP_INT_MAX;
+
+            public function __construct(int $cursorOffset)
+            {
+                $this->cursorOffset = $cursorOffset;
+            }
+
+            public function enterNode(Node $node)
+            {
+                if ($node instanceof FunctionLike) {
+                    $this->functionStack[] = $node;
+                }
+
+                if (!$node instanceof Variable || !is_string($node->name)) {
+                    return null;
+                }
+
+                $start = $node->getStartFilePos();
+                $end = $node->getEndFilePos() + 1;
+                if ($start < 0 || $end <= $start) {
+                    return null;
+                }
+                $nameStart = $start + 1;
+                if ($this->cursorOffset < $nameStart || $this->cursorOffset >= $end) {
+                    return null;
+                }
+
+                $length = $end - $start;
+                if ($length >= $this->bestLength) {
+                    return null;
+                }
+
+                $this->bestLength = $length;
+                $this->targetVariableName = $node->name;
+                $this->targetScope = $this->functionStack === [] ? null : $this->functionStack[array_key_last($this->functionStack)];
+
+                return null;
+            }
+
+            public function leaveNode(Node $node)
+            {
+                if ($node instanceof FunctionLike) {
+                    array_pop($this->functionStack);
+                }
+
+                return null;
+            }
+        };
+        $finderTraverser = new NodeTraverser();
+        $finderTraverser->addVisitor($targetFinder);
+        $finderTraverser->traverse($stmts);
+
+        $targetVariableName = $targetFinder->targetVariableName;
+        if ($targetVariableName === '') {
+            return [];
+        }
+        if ($targetVariableName === $newName) {
+            return [];
+        }
+        if ($targetVariableName === 'this' || in_array($targetVariableName, Scope::SUPERGLOBAL_VARIABLES, true)) {
+            return [];
+        }
+
+        $targetScope = $targetFinder->targetScope;
+        $collector = new class($targetVariableName, $targetScope, $newName) extends NodeVisitorAbstract {
+            public string $targetVariableName;
+
+            public ?FunctionLike $targetScope;
+
+            public string $newName;
+
+            /** @var list<FunctionLike> */
+            public array $functionStack = [];
+
+            /** @var list<array{startOffset: int, endOffset: int,  replacement: string}> */
+            public array $edits = [];
+
+            public function __construct(
+                string $targetVariableName,
+                ?FunctionLike $targetScope,
+                string $newName,
+            ) {
+                $this->targetVariableName = $targetVariableName;
+                $this->targetScope = $targetScope;
+                $this->newName = $newName;
+            }
+
+            public function enterNode(Node $node)
+            {
+                if ($node instanceof FunctionLike) {
+                    $this->functionStack[] = $node;
+                }
+
+                if (!$node instanceof Variable || !is_string($node->name) || $node->name !== $this->targetVariableName) {
+                    return null;
+                }
+
+                $currentScope = $this->functionStack === [] ? null : $this->functionStack[array_key_last($this->functionStack)];
+                if ($currentScope !== $this->targetScope) {
+                    return null;
+                }
+
+                $start = $node->getStartFilePos();
+                $end = $node->getEndFilePos() + 1;
+                if ($start < 0 || $end <= $start) {
+                    return null;
+                }
+
+                $this->edits[] = [
+                    'startOffset' => $start + 1,
+                    'endOffset' => $end,
+                    'replacement' => $this->newName,
+                ];
+
+                return null;
+            }
+
+            public function leaveNode(Node $node)
+            {
+                if ($node instanceof FunctionLike) {
+                    array_pop($this->functionStack);
+                }
+
+                return null;
+            }
+        };
+        $collectorTraverser = new NodeTraverser();
+        $collectorTraverser->addVisitor($collector);
+        $collectorTraverser->traverse($stmts);
+
+        return $collector->edits;
+    }
+
     /**
      * @param array{namespace: string, useClasses: array<string, string>} $context
      */
@@ -1757,6 +1942,7 @@ final class PhpstanReflectionWorker
             : [];
         $text = isset($params['text']) && is_string($params['text']) ? $params['text'] : '';
         $cursorOffset = isset($params['cursorOffset']) && is_int($params['cursorOffset']) ? $params['cursorOffset'] : 0;
+        $newName = isset($params['newName']) && is_string($params['newName']) ? $params['newName'] : '';
         $rangeStart = isset($params['rangeStartOffset']) && is_int($params['rangeStartOffset'])
             ? $params['rangeStartOffset']
         : 0;
@@ -1776,6 +1962,9 @@ final class PhpstanReflectionWorker
         }
         if (in_array('definition', $capabilities, true) && $filePath !== '' && $text !== '') {
             $result['definitions'] = $this->collectDefinitionPayload($filePath, $text, $cursorOffset);
+        }
+        if (in_array('rename', $capabilities, true) && $filePath !== '' && $text !== '' && $newName !== '') {
+            $result['renameEdits'] = $this->collectRenameEdits($filePath, $text, $cursorOffset, $newName);
         }
 
         return [

@@ -11,6 +11,7 @@ import type { InitializeParams, WorkspaceFolder } from 'vscode-languageserver/no
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { resolvePhpstanRuntime } from './runtime/phpstanCommand.js';
 import { createPhpProcessReflectionClient } from './reflection/phpstanReflectionClient.js';
 import {
@@ -199,6 +200,7 @@ connection.onInitialize((params: InitializeParams) => {
       inlayHintProvider: true,
       hoverProvider: true,
       definitionProvider: true,
+      renameProvider: true,
     },
   };
 });
@@ -347,6 +349,46 @@ connection.onDefinition(async (params) => {
       end: { line: definition.line, character: definition.character },
     },
   }));
+});
+
+connection.onRenameRequest(async (params) => {
+  const filePath = workspaceUriToPath(params.textDocument.uri);
+  if (!filePath) {
+    return null;
+  }
+  let savedText = '';
+  try {
+    savedText = await readFile(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+  const savedDocument = TextDocument.create(params.textDocument.uri, 'php', 0, savedText);
+  const cursorUtf16 = savedDocument.offsetAt(params.position);
+  const result = await reflectionClient.resolveNodeContext({
+    filePath,
+    cursorOffset: utf16OffsetToUtf8ByteOffset(savedText, cursorUtf16),
+    text: savedText,
+    newName: params.newName,
+    capabilities: ['rename'],
+  });
+  const renameEdits = result?.renameEdits ?? [];
+  if (renameEdits.length === 0) {
+    return null;
+  }
+
+  return {
+    changes: {
+      [params.textDocument.uri]: renameEdits.map((edit) => ({
+        range: {
+          start: savedDocument.positionAt(
+            utf8ByteOffsetToUtf16Offset(savedText, edit.startOffset),
+          ),
+          end: savedDocument.positionAt(utf8ByteOffsetToUtf16Offset(savedText, edit.endOffset)),
+        },
+        newText: edit.replacement,
+      })),
+    },
+  };
 });
 
 connection.onDidChangeConfiguration((params) => {
