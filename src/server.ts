@@ -15,18 +15,70 @@ import { readFile } from 'node:fs/promises';
 import { resolvePhpstanRuntime } from './runtime/phpstanCommand.js';
 import { createPhpProcessReflectionClient } from './reflection/phpstanReflectionClient.js';
 import { runInfoCommand } from './cli/info.js';
+import { formatVersionText, getServerVersion } from './cli/version.js';
 import {
   createPhpstanDiagnosticsService,
   type PhpstanDiagnosticsSettings,
   type PhpstanDiagnosticsSettingsUpdate,
 } from './diagnostics/phpstanDiagnostics.js';
 
-if (process.argv[2] === 'info') {
+const cliArgs = process.argv.slice(2);
+
+async function printUsage(toStderr = false): Promise<void> {
+  const writer = toStderr
+    ? (line: string) => process.stderr.write(`${line}\n`)
+    : (line: string) => process.stdout.write(`${line}\n`);
+  writer(formatVersionText(await getServerVersion()));
+  writer('');
+  writer('Usage: phpstan-ls-lite <command|transport>');
+  writer('');
+  writer('Commands:');
+  writer('  info\t\tShow PHP/PHPStan runtime info for current directory');
+  writer('  --version\tShow server version');
+  writer('  -h, --help\tShow this help');
+  writer('');
+  writer('Transport options (required to start the LSP server):');
+  writer('  --stdio');
+  writer('  --pipe <name> | --pipe=<name>');
+  writer('  --socket <port> | --socket=<port>');
+  writer('  --node-ipc');
+}
+
+if (cliArgs[0] === 'info') {
   const exitCode = await runInfoCommand();
   process.exit(exitCode);
 }
+if (cliArgs.includes('--version')) {
+  process.stdout.write(`${formatVersionText(await getServerVersion())}\n`);
+  process.exit(0);
+}
+if (cliArgs.includes('--help') || cliArgs.includes('-h')) {
+  await printUsage(false);
+  process.exit(0);
+}
 
-const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
+function hasTransportArg(argv: readonly string[]): boolean {
+  for (const arg of argv) {
+    if (
+      arg === '--stdio' ||
+      arg === '--node-ipc' ||
+      arg === '--socket' ||
+      arg === '--pipe' ||
+      arg.startsWith('--socket=') ||
+      arg.startsWith('--pipe=')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+if (!hasTransportArg(cliArgs)) {
+  await printUsage(true);
+  process.exit(1);
+}
+
+const connection = createConnection(ProposedFeatures.all);
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 const reflectionWorkerPath = fileURLToPath(
   new URL('../php/phpstan-reflection-worker.php', import.meta.url),

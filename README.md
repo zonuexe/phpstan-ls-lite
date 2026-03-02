@@ -50,13 +50,26 @@ Current implementation focuses on diagnostics and runtime detection.
 
 ## Run with npx
 
-After publishing to npm, start the language server with:
+After publishing to npm, start the language server with an explicit transport:
 
 ```bash
-npx --yes @zonuexe/phpstan-ls-lite
+npx --yes @zonuexe/phpstan-ls-lite --stdio
 ```
 
-The server communicates via stdio.
+Transport must be specified when starting the LSP server.
+
+Supported transport flags:
+
+- `--stdio`
+- `--pipe <name>` or `--pipe=<name>`
+- `--socket <port>` or `--socket=<port>`
+- `--node-ipc`
+
+Print server version:
+
+```bash
+npx --yes @zonuexe/phpstan-ls-lite --version
+```
 
 To inspect runtime information from the current directory:
 
@@ -64,7 +77,7 @@ To inspect runtime information from the current directory:
 npx --yes @zonuexe/phpstan-ls-lite info
 ```
 
-This prints detected `PHP` and `PHPStan` runtime details (version, runtime path, and detection source).
+This prints server version and detected `PHP` / `PHPStan` runtime details.
 
 ## Example Client Configuration
 
@@ -72,7 +85,7 @@ This prints detected `PHP` and `PHPStan` runtime details (version, runtime path,
 
 ```lua
 require('lspconfig').phpstan_ls_lite.setup({
-  cmd = { 'npx', '--yes', '@zonuexe/phpstan-ls-lite' },
+  cmd = { 'npx', '--yes', '@zonuexe/phpstan-ls-lite', '--stdio' },
   filetypes = { 'php' },
   root_dir = require('lspconfig.util').root_pattern('composer.json', '.git'),
 })
@@ -94,7 +107,7 @@ require('lspconfig').phpstan_ls_lite.setup({
 new LanguageClient(
   "phpstan-ls-lite",
   "PHPStan LS Lite",
-  { command: "npx", args: ["--yes", "@zonuexe/phpstan-ls-lite"] },
+  { command: "npx", args: ["--yes", "@zonuexe/phpstan-ls-lite", "--stdio"] },
   { documentSelector: [{ language: "php" }] }
 );
 ```
