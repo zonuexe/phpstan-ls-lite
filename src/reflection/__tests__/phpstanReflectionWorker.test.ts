@@ -7,14 +7,38 @@ import { spawnSync } from 'node:child_process';
 const workerPath = path.resolve(process.cwd(), 'php/phpstan-reflection-worker.php');
 const tmpRoot = path.join(process.cwd(), '.tmp-tests', `phpstan-ls-lite-test-${process.pid}`);
 
+function canRunReflectionWorkerTests(): boolean {
+  const probe = spawnSync(
+    'php',
+    [
+      '-r',
+      `
+$autoloads = [
+  getcwd() . '/vendor-bin/phpstan/vendor/autoload.php',
+  getcwd() . '/vendor/autoload.php',
+];
+foreach ($autoloads as $autoload) {
+  if (is_file($autoload)) {
+    require_once $autoload;
+  }
+}
+echo class_exists('PHPStan\\\\DependencyInjection\\\\ContainerFactory') ? '1' : '0';
+`,
+    ],
+    { encoding: 'utf8' },
+  );
+  return probe.status === 0 && probe.stdout.trim() === '1';
+}
+
+const reflectionWorkerAvailable = canRunReflectionWorkerTests();
+
 after(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe('phpstan-reflection-worker', () => {
+describe('phpstan-reflection-worker', { skip: !reflectionWorkerAvailable }, () => {
   it('returns call argument hints from PHPStan reflection', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
@@ -63,8 +87,7 @@ strlen('a');
   });
 
   it('returns hints for nested function calls', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
@@ -116,8 +139,7 @@ printf("count: %d\\n", count($a));
   });
 
   it('returns hints for nested user-defined method calls', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
@@ -173,8 +195,7 @@ class C {
   });
 
   it('returns definition for nested user-defined method call', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
@@ -227,8 +248,7 @@ class C {
   });
 
   it('returns definition for class name usage', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
@@ -281,8 +301,7 @@ class User {
   });
 
   it('returns definition for class const fetch usage', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
@@ -341,8 +360,7 @@ class User {
   });
 
   it('returns definition for static method and static property usage', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
@@ -401,8 +419,7 @@ class User {
   });
 
   it('returns rename edits for local variable in current scope', () => {
-    const phpProbe = spawnSync('php', ['-v'], { encoding: 'utf8' });
-    if (phpProbe.status !== 0) {
+    if (!reflectionWorkerAvailable) {
       return;
     }
 
