@@ -23,6 +23,18 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Install PHPStan dependencies
+        run: composer install --working-dir=vendor-bin/phpstan --no-interaction --prefer-dist
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
