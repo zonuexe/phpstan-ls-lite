@@ -9,13 +9,17 @@ The project focuses on:
 - aiming for as-complete-as-possible support of the latest PHPStan
 - maximizing PHPStan capabilities to provide precise and reliable type information
 
-## Status (v0.0.3)
+## Status (v0.0.4)
 
-Current implementation focuses on diagnostics and runtime detection.
+Current implementation provides diagnostics plus core reflection-powered editor features.
 
 ### Implemented
 
-- LSP server over stdio
+- LSP server transports:
+  - `--stdio`
+  - `--pipe <name>` / `--pipe=<name>`
+  - `--socket <port>` / `--socket=<port>`
+  - `--node-ipc`
 - PHPStan runtime detection from `composer.json`:
   1. `scripts.phpstan`
   2. `config.vendor-dir` + `bin/phpstan`
@@ -25,16 +29,25 @@ Current implementation focuses on diagnostics and runtime detection.
   - `textDocument/didOpen`
   - `textDocument/didChange`
   - `textDocument/didSave`
+- Reflection-powered language features:
+  - `textDocument/hover`
+  - `textDocument/inlayHint` (call argument hints)
+  - `textDocument/definition`
+  - `textDocument/rename` (local variable rename in current file)
 - Editor Mode execution when supported:
   - `--tmp-file`
   - `--instead-of`
 - Sequential analysis queue to avoid overlapping runs
+- CLI runtime inspection:
+  - `--help`
+  - `--version`
+  - `info` (prints server/PHP/PHPStan runtime details)
 
 ### Not Yet Implemented
 
-- Hover
 - Code actions
-- Completion
+- Semantic completion items
+- Rich document symbols
 
 ### Planned Architecture (Reflection Bridge)
 
@@ -77,7 +90,7 @@ To inspect runtime information from the current directory:
 npx --yes @zonuexe/phpstan-ls-lite info
 ```
 
-This prints server version and detected `PHP` / `PHPStan` runtime details.
+This prints server version/path and detected `PHP` / `PHPStan` runtime details.
 
 ## Example Client Configuration
 
