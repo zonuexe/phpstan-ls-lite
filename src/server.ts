@@ -438,9 +438,7 @@ connection.onRenameRequest(async (params) => {
     changes: {
       [params.textDocument.uri]: renameEdits.map((edit) => ({
         range: {
-          start: savedDocument.positionAt(
-            utf8ByteOffsetToUtf16Offset(savedText, edit.startOffset),
-          ),
+          start: savedDocument.positionAt(utf8ByteOffsetToUtf16Offset(savedText, edit.startOffset)),
           end: savedDocument.positionAt(utf8ByteOffsetToUtf16Offset(savedText, edit.endOffset)),
         },
         newText: edit.replacement,

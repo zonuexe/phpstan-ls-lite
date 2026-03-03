@@ -190,7 +190,10 @@ class C {
 }
 `;
     fs.writeFileSync(phpFile, code, 'utf8');
-    const innerCallOffset = Buffer.byteLength(code.slice(0, code.indexOf('$this->inner(') + 7), 'utf8');
+    const innerCallOffset = Buffer.byteLength(
+      code.slice(0, code.indexOf('$this->inner(') + 7),
+      'utf8',
+    );
 
     const request = {
       protocolVersion: 1,
@@ -240,7 +243,10 @@ class User {
 }
 `;
     fs.writeFileSync(phpFile, code, 'utf8');
-    const classUsageOffset = Buffer.byteLength(code.slice(0, code.indexOf('new Target(') + 5), 'utf8');
+    const classUsageOffset = Buffer.byteLength(
+      code.slice(0, code.indexOf('new Target(') + 5),
+      'utf8',
+    );
 
     const request = {
       protocolVersion: 1,

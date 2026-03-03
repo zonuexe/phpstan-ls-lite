@@ -3,10 +3,7 @@ import { spawn } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { getPhpstanVersionCommand } from '../runtime/phpstanEditorMode.js';
 import { getServerVersion } from './version.js';
-import {
-  resolvePhpstanRuntime,
-  type ResolvedPhpstanRuntime,
-} from '../runtime/phpstanCommand.js';
+import { resolvePhpstanRuntime, type ResolvedPhpstanRuntime } from '../runtime/phpstanCommand.js';
 
 type CommandExecutionResult = {
   exitCode: number | null;
@@ -160,8 +157,7 @@ export async function collectEnvironmentInfo(options?: {
           resolvedRuntime.workingDirectory,
           platform,
           runCommand,
-        )) ??
-        `(not found in PATH: ${resolvedRuntime.runtime.command})`);
+        )) ?? `(not found in PATH: ${resolvedRuntime.runtime.command})`);
 
   return {
     serverVersion,

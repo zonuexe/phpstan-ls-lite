@@ -4,7 +4,11 @@ import type { ResolvedPhpstanRuntime } from '../../runtime/phpstanCommand.js';
 import { collectEnvironmentInfo, formatEnvironmentInfo } from '../info.js';
 
 function createCommandRunner(
-  resolver: (command: string, args: readonly string[], cwd: string) => {
+  resolver: (
+    command: string,
+    args: readonly string[],
+    cwd: string,
+  ) => {
     exitCode: number | null;
     stdout?: string;
     stderr?: string;
