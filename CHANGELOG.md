@@ -2,7 +2,33 @@
 
 All notable changes of `phpstan-ls-lite` are documented in this file using the [Keep a Changelog](https://keepachangelog.com/) principles.
 
-## Unreleased
+<!-- ## Unreleased -->
+
+## 0.0.4 - 2026-03-04
+
+### Added
+
+ * `textDocument/definition` support backed by PHPStan reflection.
+ * `textDocument/rename` support for local variable renames in the current file.
+ * `info` subcommand to print runtime details from the current directory:
+   * server version and server path
+   * PHP version and PHP binary path
+   * detected PHPStan runtime path/source/args and PHPStan version
+ * `--version` CLI flag.
+
+### Changed
+
+ * LSP transport selection is now explicit at startup; use one of:
+   * `--stdio`
+   * `--pipe <name>` / `--pipe=<name>`
+   * `--socket <port>` / `--socket=<port>`
+   * `--node-ipc`
+   Running without transport flags now prints help and exits.
+ * Improved reflection-side caching to reduce repeated analysis cost for interactive features.
+
+### Fixed
+
+ * Better diagnostics fallback for unsaved buffers with PHP syntax errors by re-running analysis against the saved file.
 
 ## 0.0.3 - 2026-02-20
 
