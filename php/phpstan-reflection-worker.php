@@ -419,7 +419,6 @@ final class PhpstanReflectionWorker
     ) {
         $keys = $this->buildCacheKeys($reflectionState, $feature, $filePath, $text, $extra);
         if (array_key_exists($keys['memoryKey'], $this->memoryCache)) {
-            // @phpstan-ignore return.type
             return $this->memoryCache[$keys['memoryKey']];
         }
 
@@ -437,7 +436,6 @@ final class PhpstanReflectionWorker
         }
         $this->memoryCache[$keys['memoryKey']] = $loaded;
 
-        // @phpstan-ignore return.type
         return $loaded;
     }
 
